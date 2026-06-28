@@ -16,6 +16,8 @@ When developers rely on a single `GlobalExceptionMiddleware` as the only safety 
 | 2 | Queue trigger retry storm | Permanently-broken messages retry 5× before dead-lettering, wasting compute |
 | 3 | Unobserved task exception | Fire-and-forget async crashes the process, taking all functions offline |
 | 4 | Exception context destruction | Re-wrapping exceptions removes root cause, stack trace, and original message |
+| **5** | **Thread pool starvation** | **`.Result` blocks threads; middleware never fires; app becomes unresponsive under load** |
+| **6** | **Resource leak** | **`new HttpClient()` per request; handler catches SocketExceptions but can't reclaim sockets** |
 
 ---
 
@@ -214,6 +216,130 @@ ExceptionDispatchInfo.Capture(ex).Throw();
 
 ---
 
+## Demo 5: Thread Pool Starvation — GlobalExceptionMiddleware Is Never Invoked
+
+**File:** `Functions/BlockingCallHttp.cs`
+
+`GlobalExceptionMiddleware` only intercepts **exceptions**. Thread pool starvation doesn't throw — threads simply block. The middleware is completely invisible to this failure mode.
+
+```csharp
+// ❌ ANTI-PATTERN: .Result blocks a thread pool thread until the async work completes
+var order = _orderService.CreateOrderAsync(orderRequest).Result;
+```
+
+Under concurrent load:
+1. Each request blocks one thread pool thread via `.Result`
+2. .NET's thread pool starts with a limited number of threads
+3. When all threads are blocked, new threads are injected slowly (~1 per 500ms)
+4. Requests queue up; response times climb from milliseconds to seconds to timeouts
+5. `GlobalExceptionMiddleware` logs **nothing** — there is no exception to catch
+
+### How to Observe
+
+```bash
+# Fire 20 concurrent requests and watch response times climb
+for i in {1..20}; do
+  curl -s -o /dev/null -w "Request $i: %{http_code} in %{time_total}s\n" \
+    -X POST http://localhost:7071/api/orders/blocking \
+    -H "Content-Type: application/json" \
+    -d '{"userId":"user-001","productId":"p1","quantity":1,"amount":100}' &
+done
+wait
+```
+
+Expected: early requests complete quickly; later requests take progressively longer; no exceptions appear in the middleware logs. The handler is silent — because it was never invoked.
+
+### Why This Happens in Real Deployments
+
+- Legacy synchronous libraries wrapped in async adapters
+- Service layer that mixes `async/await` with `.Result` or `.GetAwaiter().GetResult()`
+- Calls to third-party SDKs that return `Task` but the caller blocks on them
+- Azure Functions has a configurable `functionTimeout` (default 5 minutes) — when the thread pool is saturated, requests hit this timeout and produce 500s that appear to come from nowhere
+
+### The Fix
+
+```csharp
+// Make the handler async and await the service call
+[Function("BlockingCallHttp")]
+public async Task<HttpResponseData> RunAsync(...)
+{
+    var order = await _orderService.CreateOrderAsync(orderRequest); // ✅ no blocking
+}
+```
+
+---
+
+## Demo 6: Resource Leak — The Handler Catches Exceptions But Damage Has Already Accumulated
+
+**Files:** `Services/ExternalApiService.cs`, `Functions/ResourceLeakHttp.cs`
+
+A new `HttpClient` is created on every request. `using` disposes the managed C# object, but the underlying TCP socket enters `TIME_WAIT` state for ~4 minutes (an OS-level protocol requirement — the OS cannot be told to skip this).
+
+`GlobalExceptionMiddleware` (and the local catch block) catches each `SocketException` and returns 500. But it **cannot reclaim the exhausted ports**. Each caught exception represents one more leaked socket. After enough requests, the port pool is exhausted and every call fails.
+
+```csharp
+public async Task<string> FetchProductDetailsAsync(string productId)
+{
+    // ❌ ANTI-PATTERN: new HttpClient() per call
+    // Each disposal leaves an OS socket in TIME_WAIT for ~4 minutes
+    using var client = new HttpClient();
+    return await client.GetStringAsync($"https://product-api/{productId}");
+}
+```
+
+### How to Observe
+
+```bash
+# The failure probability increases with each request (simulating port accumulation)
+for i in {1..50}; do
+  curl -s -o /dev/null -w "Request $i: %{http_code}\n" \
+    http://localhost:7071/api/products/prod-$(printf '%06d' $i)
+done
+```
+
+Expected: early requests succeed (200); failure rate increases with request count; logs show `SocketException` per failure; restarting the function app temporarily restores operation.
+
+### The Critical Observation
+
+This function **does** have a `try/catch` — exceptions are caught and handled. `GlobalExceptionMiddleware` would also catch anything that escapes. Despite this, the system degrades with every request.
+
+This is the core proof: **exception handling responds to symptoms, not root causes**. Each handled 500 response represents one more socket leaked. Handle 1,000 exceptions → 1,000 leaked sockets. The handler is cleaning up after each failure but cannot stop the next one.
+
+### The Fix
+
+```csharp
+// Register IHttpClientFactory in Program.cs:
+services.AddHttpClient<ExternalApiService>();
+
+// Inject HttpClient via constructor — the factory manages connection pooling:
+public class ExternalApiService
+{
+    private readonly HttpClient _client; // reused across requests, connections pooled
+
+    public ExternalApiService(HttpClient client) { _client = client; }
+
+    public async Task<string> FetchProductDetailsAsync(string productId)
+        => await _client.GetStringAsync($"https://product-api/{productId}"); // ✅
+}
+```
+
+---
+
+## Why a Global Handler Is Not Enough — Summary
+
+| Failure Mode | Exception Thrown? | Middleware Invoked? | Damage Recoverable by Handler? |
+|---|---|---|---|
+| Demo 1: Wrong status codes | Yes | Yes | No — can only return 500 |
+| Demo 2: Retry storm | Yes | No (queue trigger re-throws) | No — can't classify retry |
+| Demo 3: Unobserved task | No (until GC) | No | No — process may crash |
+| Demo 4: Context loss | Yes | Yes | No — root cause already gone |
+| **Demo 5: Thread pool starvation** | **No** | **No — bypassed entirely** | **No — threads still blocked** |
+| **Demo 6: Resource leak** | Yes (eventually) | Yes | **No — sockets already leaked** |
+
+**The pattern:** `GlobalExceptionMiddleware` only operates on exceptions that reach it. It cannot intercept blocked threads, leaked OS resources, or unobserved tasks. It cannot recover state that was already corrupted or resources already released. Real stability requires addressing root causes at the point they occur — not catching symptoms at the application boundary.
+
+---
+
 ## Reading Order
 
 For maximum educational value, read files in this order:
@@ -223,6 +349,8 @@ For maximum educational value, read files in this order:
 3. `Services/OrderService.cs` — context destruction through re-wrapping (Demo 4)
 4. `Functions/ProcessOrderHttp.cs` — wrong status codes and fire-and-forget crash (Demo 1 & 3)
 5. `Functions/ProcessQueueMessage.cs` — retry storm (Demo 2)
-6. `Program.cs` — the false safety net (GlobalExceptionMiddleware)
+6. `Functions/BlockingCallHttp.cs` — thread pool starvation, middleware bypassed (Demo 5)
+7. `Services/ExternalApiService.cs` + `Functions/ResourceLeakHttp.cs` — resource leak (Demo 6)
+8. `Program.cs` — the false safety net (GlobalExceptionMiddleware)
 
 Every `// ❌ ANTI-PATTERN` comment explains what's wrong. Every comment block includes a preview of the correct fix.

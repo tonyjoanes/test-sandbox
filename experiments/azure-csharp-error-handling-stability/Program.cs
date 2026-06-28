@@ -52,6 +52,10 @@ var host = new HostBuilder()
         services.AddSingleton<UserService>();
         services.AddSingleton<PaymentService>();
         services.AddSingleton<OrderService>();
+        // ❌ ANTI-PATTERN (Demo 6): Registered as singleton, but ExternalApiService
+        // internally creates a new HttpClient per call — the singleton lifetime does not help.
+        // The resource leak is inside the method, not at the DI registration level.
+        services.AddSingleton<ExternalApiService>();
     })
     .Build();
 
