@@ -3,6 +3,15 @@
 # > Startup Command) before the Functions host starts, on every container
 # start/restart.
 #
+# Deployed as part of the function app package (repo root, alongside
+# host.json) rather than pushed separately via Kudu — this works whether or
+# not the SCM/Kudu site is reachable. If your App Service has network
+# restrictions or a private endpoint and Kudu is not on your allowed list,
+# nothing else about this file changes: it lands at
+# /home/site/wwwroot/startup.sh through the normal zip-deploy/run-from-package
+# path used by `func azure functionapp publish`, and main.bicep's
+# appCommandLine points straight at it.
+#
 # Why this exists: uploading an internal root/issuing CA certificate as a
 # "public certificate" on App Service and adding it to WEBSITE_LOAD_CERTIFICATES
 # only copies the file into the container (/var/ssl/certs). On multi-tenant

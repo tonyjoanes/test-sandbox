@@ -45,6 +45,8 @@ Environment v3, which has first-class private-CA trust support.
 ├── profile.ps1                # deliberately empty — see comments
 ├── requirements.psd1          # deliberately empty — no Az module needed
 ├── local.settings.json.example
+├── startup.sh                  # the actual root-CA trust fix — deployed as
+│                               # part of the function package, not via Kudu
 ├── HealthCheckTimer/
 │   ├── function.json          # timer schedule: 0 */5 * * * *
 │   └── run.ps1                # entry point — thin, delegates to the module
@@ -54,9 +56,16 @@ Environment v3, which has first-class private-CA trust support.
 │                               # Get-CertificateChainDiagnostics
 └── infra/
     ├── main.bicep              # EP1 Linux plan, Function App, Key Vault-sourced cert
-    ├── startup.sh               # the actual root-CA trust fix
-    └── deploy.sh                 # infra deploy + startup.sh upload + code publish
+    └── deploy.sh                 # infra deploy + code publish + diagnostic settings
 ```
+
+Everything above is reachable through the ARM control plane / SCM deployment
+API — `func azure functionapp publish`, `az deployment group create`, `az
+monitor diagnostic-settings create`. Nothing in this project depends on the
+interactive Kudu site (`<app>.scm.azurewebsites.net`) being reachable. That
+matters on locked-down App Services (access restrictions, private endpoint,
+or a corporate egress proxy that just doesn't allow `*.scm.azurewebsites.net`)
+— see "Getting logs without Kudu" below.
 
 ---
 
@@ -114,16 +123,19 @@ Environment v3, which has first-class private-CA trust support.
 3. `WEBSITE_LOAD_CERTIFICATES` now stages those CA cert files under
    `/var/ssl/certs` inside the container — but that's just a file on disk,
    **not yet trusted** by anything.
-4. `infra/startup.sh`, set as the app's **Startup Command**, runs on every
+4. `startup.sh`, set as the app's **Startup Command**
+   (`bash /home/site/wwwroot/startup.sh` in `main.bicep`), runs on every
    container start: it converts each staged CA cert to PEM, drops it in
    `/usr/local/share/ca-certificates/`, and runs `update-ca-certificates`.
    That's what actually makes OpenSSL (and therefore PowerShell 7's
    `Invoke-WebRequest`) trust certificates issued by that CA.
 5. Because this must be reapplied on every fresh container instance, the
-   script itself needs to live somewhere durable — `deploy.sh` uploads it to
-   `/home` (the persistent share mounted into every instance) via the Kudu
-   VFS API, and the Startup Command points at `/home/startup.sh` rather than
-   a path inside the deployed function code package.
+   script needs to live somewhere durable. Rather than pushing it separately
+   via Kudu's VFS API, it's checked into the repo at the project root and
+   deployed as an ordinary part of the function code package — `func azure
+   functionapp publish` / zip-deploy lands it at
+   `/home/site/wwwroot/startup.sh`, which is on the same persistent share
+   Kudu would have written to, without needing the SCM site reachable at all.
 6. **Restart the app** after the first deploy of the cert + startup command,
    and after rotating the CA. A running container that already initialized
    its trust store won't pick up changes until it restarts.
@@ -143,7 +155,7 @@ need ASE for networking reasons, overkill if this is the only reason.
 az keyvault certificate import \
   --vault-name <your-kv> --name <cert-name> --file client.pfx --password <pfx-password>
 
-# 2. Deploy infra, upload startup.sh, publish code, restart:
+# 2. Deploy infra, publish code (includes startup.sh), restart, wire logs:
 export RESOURCE_GROUP=rg-healthcheck-demo
 export LOCATION=uksouth
 export NAME_PREFIX=hcdemo01
@@ -151,14 +163,80 @@ export KEY_VAULT_RESOURCE_ID=/subscriptions/.../resourceGroups/.../providers/Mic
 export CLIENT_CERT_KV_NAME=<cert-name>
 export HEALTHCHECK_TARGET_URL=https://internal-app.contoso.internal/health
 export INTERNAL_CA_THUMBPRINTS=<root-ca-thumbprint>,<issuing-ca-thumbprint>
+export LOG_ANALYTICS_WORKSPACE_ID=/subscriptions/.../resourceGroups/.../providers/Microsoft.OperationalInsights/workspaces/<your-law>
 
 ./infra/deploy.sh
 ```
+
+`LOG_ANALYTICS_WORKSPACE_ID` is optional but strongly recommended if Kudu
+isn't reachable from where you sit — see the next section.
 
 `main.bicep` grants nothing on the Key Vault itself — grant the deploying
 principal (and, if you later move secret retrieval into the function,
 the Function App's managed identity) `get`/`list` on certificates/secrets
 before running this.
+
+---
+
+## Getting logs without Kudu
+
+If the SCM/Kudu site (`<app>.scm.azurewebsites.net`) is blocked for you —
+access restrictions, a private endpoint on the App Service, or a corporate
+proxy that just doesn't allow that hostname — then everything that rides on
+it stops working too, not just the Kudu UI: `az webapp log tail` / `log
+stream`, downloading `LogFiles` over Kudu VFS, and the Kudu console all use
+the same SCM endpoint. This is a separate problem from certificate trust,
+and it's worth fixing independently because without it you're debugging the
+cert issue blind.
+
+The fix is to stop depending on the app's own network path for logs at all
+and use the two things that are emitted at the **platform** level instead —
+these are collected by Azure Monitor outside the app's sandbox, so they're
+unaffected by inbound access restrictions on the app or its SCM site:
+
+1. **`FunctionAppLogs`** — the unified log category for Linux Function Apps.
+   Every `Write-Information` / `Write-Warning` / `Write-Error` / thrown
+   exception in `run.ps1` ends up here (and in Application Insights, if
+   configured — `main.bicep` wires `APPLICATIONINSIGHTS_CONNECTION_STRING`
+   in already).
+2. **`AppServiceConsoleLogs`** — raw container stdout/stderr, which is the
+   only place you can see whether the **Startup Command itself** ran and
+   succeeded. This is the category that replaces "open the Kudu console and
+   watch it happen": if `startup.sh` errors, or `update-ca-certificates`
+   fails, or the app command line is wrong, it shows up here even when
+   nothing else does.
+
+Wire both up via a Diagnostic Setting on the Function App resource (done
+automatically by `deploy.sh` if `LOG_ANALYTICS_WORKSPACE_ID` is set):
+
+```bash
+az monitor diagnostic-settings create \
+  --name hcdemo01-diag \
+  --resource <function-app-name> \
+  --resource-group <rg> \
+  --resource-type "Microsoft.Web/sites" \
+  --workspace <log-analytics-workspace-resource-id> \
+  --logs '[{"category":"FunctionAppLogs","enabled":true},{"category":"AppServiceConsoleLogs","enabled":true}]'
+```
+
+Then query in the Log Analytics workspace (or Application Insights, for
+`traces`/`exceptions` specifically) instead of tailing logs:
+
+```kusto
+AppServiceConsoleLogs
+| where TimeGenerated > ago(1h)
+| order by TimeGenerated desc
+
+FunctionAppLogs
+| where TimeGenerated > ago(1h)
+| where Message has "HealthCheck"
+| order by TimeGenerated desc
+```
+
+One thing this doesn't fix: if outbound egress from the app itself is also
+restricted (e.g. VNet-integrated with forced tunneling), confirm the
+Application Insights ingestion endpoint is on your allowed list too — that's
+a separate outbound path from the inbound SCM access this section is about.
 
 ---
 
@@ -185,10 +263,11 @@ func start
 | Symptom in logs | Cause | Where to look |
 |---|---|---|
 | `Cannot find certificate with thumbprint …` | `WEBSITE_LOAD_CERTIFICATES` missing this thumbprint, cert not uploaded, or wrong plan tier | `Get-ClientCertificate` error message; Configuration → Application settings |
-| `unable to get local issuer certificate` / `PKIX path building failed` | Internal CA not trusted by the container's OS trust store | `infra/startup.sh` didn't run or hasn't been restarted since deploy |
+| `unable to get local issuer certificate` / `PKIX path building failed` | Internal CA not trusted by the container's OS trust store | `startup.sh` didn't run or hasn't been restarted since deploy — check `AppServiceConsoleLogs` |
 | `RemoteCertificateNameMismatch` | Health check URL doesn't match the server cert's SAN | `HEALTHCHECK_TARGET_URL` app setting |
 | Handshake fails, server closes connection immediately | Server rejected the client cert (wrong issuer, not in server's trusted-client list) | Confirm the client cert's issuing CA is trusted by the *server*, not just the function app |
 | Timer never fires / `IsPastDue: true` | App was restarting or scaled down at the scheduled time | `useMonitor: true` in `function.json` keeps schedule history for this |
+| `az webapp log tail` hangs / times out, Kudu 403s or won't load | SCM/Kudu site is network-restricted separately from the main site | See "Getting logs without Kudu" — use Diagnostic Settings → Log Analytics instead |
 
 ---
 
@@ -199,3 +278,5 @@ func start
 - [Certificates in App Service Environment — Microsoft Learn](https://learn.microsoft.com/en-us/azure/app-service/environment/overview-certificates)
 - [Using certs in code & trusting private CAs on App Service Linux — Patrick O'Brien](https://www.patrickob.com/2023/02/08/using-certs-in-code-trusting-private-cas-on-app-service-linux/)
 - [Consumption plan Linux certificate loading issue — Azure/azure-functions-host#6286](https://github.com/Azure/azure-functions-host/issues/6286)
+- [Set up access restrictions (SCM/Kudu site restrictions) — Microsoft Learn](https://learn.microsoft.com/en-us/azure/app-service/app-service-ip-restrictions)
+- [Monitor Azure Functions (FunctionAppLogs / diagnostic settings) — Microsoft Learn](https://learn.microsoft.com/en-us/azure/azure-functions/monitor-functions)

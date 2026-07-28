@@ -92,12 +92,12 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'PowerShell|7.4'
-      // Points at /home, the persistent share mounted into every instance —
-      // NOT a path inside the function code package (that content isn't
-      // guaranteed to survive every container recycle the same way /home
-      // does). deploy.sh uploads infra/startup.sh there via the Kudu VFS API
-      // before the app is expected to serve traffic.
-      appCommandLine: '/home/startup.sh'
+      // startup.sh is deployed as part of the function code package (repo
+      // root), so it lands at /home/site/wwwroot/startup.sh through the
+      // normal zip-deploy/run-from-package path — no Kudu/SCM access
+      // required to get it onto the box. Invoked via `bash` explicitly
+      // because zip deploy doesn't reliably preserve the executable bit.
+      appCommandLine: 'bash /home/site/wwwroot/startup.sh'
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       appSettings: [

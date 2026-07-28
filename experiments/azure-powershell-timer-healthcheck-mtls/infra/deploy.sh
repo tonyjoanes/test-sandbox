@@ -2,6 +2,15 @@
 # Illustrative end-to-end deployment. Review every value before running
 # against a real subscription — this is a worked example, not a turnkey
 # script for production use.
+#
+# Deliberately avoids the Kudu/SCM endpoint (<app>.scm.azurewebsites.net)
+# everywhere. On a locked-down App Service — access restrictions, private
+# endpoint, or a corporate proxy that simply doesn't allow *.scm.azurewebsites.net
+# — Kudu-dependent tooling (log tail/stream, Kudu VFS/console) fails even
+# though the app itself works fine. `func azure functionapp publish` and
+# `az functionapp deployment source config-zip` both use the ARM control
+# plane / SCM deployment API path, not the interactive Kudu UI, so they keep
+# working; this script sticks to that surface throughout.
 set -euo pipefail
 
 RESOURCE_GROUP="${RESOURCE_GROUP:?set RESOURCE_GROUP}"
@@ -11,6 +20,7 @@ KEY_VAULT_RESOURCE_ID="${KEY_VAULT_RESOURCE_ID:?set KEY_VAULT_RESOURCE_ID (Key V
 CLIENT_CERT_KV_NAME="${CLIENT_CERT_KV_NAME:?set CLIENT_CERT_KV_NAME}"
 HEALTHCHECK_TARGET_URL="${HEALTHCHECK_TARGET_URL:?set HEALTHCHECK_TARGET_URL}"
 INTERNAL_CA_THUMBPRINTS="${INTERNAL_CA_THUMBPRINTS:-}"
+LOG_ANALYTICS_WORKSPACE_ID="${LOG_ANALYTICS_WORKSPACE_ID:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
@@ -29,23 +39,23 @@ az deployment group create \
 
 FUNCTION_APP_NAME="${NAME_PREFIX}-func"
 
-echo "==> Uploading startup.sh to the persistent /home share via Kudu VFS"
-CREDS=$(az webapp deployment list-publishing-credentials \
-  --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP" \
-  --query "{u:publishingUserName,p:publishingPassword}" -o tsv)
-KUDU_USER=$(echo "$CREDS" | cut -f1)
-KUDU_PASS=$(echo "$CREDS" | cut -f2)
-
-curl -sS --fail -u "${KUDU_USER}:${KUDU_PASS}" \
-  -X PUT \
-  -T "$SCRIPT_DIR/startup.sh" \
-  "https://${FUNCTION_APP_NAME}.scm.azurewebsites.net/api/vfs/startup.sh"
-
-echo "==> Deploying function code"
+echo "==> Deploying function code (includes startup.sh — no separate Kudu upload needed)"
 (cd "$APP_DIR" && func azure functionapp publish "$FUNCTION_APP_NAME")
 
 echo "==> Restarting app so the trust store update in startup.sh takes effect"
 az functionapp restart --name "$FUNCTION_APP_NAME" --resource-group "$RESOURCE_GROUP"
 
-echo "==> Done. Tail logs with:"
-echo "    az webapp log tail --name $FUNCTION_APP_NAME --resource-group $RESOURCE_GROUP"
+if [ -n "$LOG_ANALYTICS_WORKSPACE_ID" ]; then
+  echo "==> Wiring platform logs to Log Analytics (bypasses Kudu/SCM entirely)"
+  az monitor diagnostic-settings create \
+    --name "${NAME_PREFIX}-diag" \
+    --resource "$FUNCTION_APP_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --resource-type "Microsoft.Web/sites" \
+    --workspace "$LOG_ANALYTICS_WORKSPACE_ID" \
+    --logs '[{"category":"FunctionAppLogs","enabled":true},{"category":"AppServiceConsoleLogs","enabled":true}]'
+else
+  echo "==> Skipping diagnostic settings — set LOG_ANALYTICS_WORKSPACE_ID to wire up Kudu-independent logging (see README 'Getting logs without Kudu')"
+fi
+
+echo "==> Done. See README 'Getting logs without Kudu' for how to query FunctionAppLogs / AppServiceConsoleLogs and Application Insights instead of log tail."
