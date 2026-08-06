@@ -1,0 +1,111 @@
+# =============================================================================
+# 07 — Conditions & Dependency Control
+# =============================================================================
+# 'condition' controls whether a stage/job/step runs at all. The default
+# condition on EVERYTHING is succeeded() — i.e. "only run if everything this
+# depends on succeeded". This file catalogs the conditions you'll actually
+# reach for, plus how cross-job dependencies + output variables combine with
+# them.
+# =============================================================================
+
+trigger:
+  - main
+
+pr:
+  branches:
+    include:
+      - main
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Compile
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: exit 0
+            displayName: 'Simulate a successful build'
+
+      - job: Lint
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: exit 0
+            displayName: 'Simulate lint (independent of Compile)'
+
+  - stage: ConditionalStage
+    dependsOn: Build
+    jobs:
+      # Default condition — implicit succeeded(). Skipped entirely if the
+      # Build stage failed or was skipped.
+      - job: OnlyIfBuildSucceeded
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Build succeeded, so I get to run"
+
+      # Runs REGARDLESS of upstream success/failure — good for cleanup,
+      # notifications, or diagnostics collection.
+      - job: AlwaysRuns
+        pool:
+          vmImage: 'ubuntu-latest'
+        condition: always()
+        steps:
+          - script: echo "I run even if Build failed"
+
+      # Runs ONLY if something upstream failed — classic "alert on failure"
+      # job.
+      - job: OnlyOnFailure
+        pool:
+          vmImage: 'ubuntu-latest'
+        condition: failed()
+        steps:
+          - script: echo "Something failed upstream — send an alert"
+
+      # Custom boolean expression combining multiple conditions. Common
+      # building blocks: eq(), ne(), and(), or(), not(), in(), contains().
+      - job: MainBranchOnly
+        pool:
+          vmImage: 'ubuntu-latest'
+        condition: >
+          and(
+            succeeded(),
+            eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+            ne(variables['Build.Reason'], 'PullRequest')
+          )
+        steps:
+          - script: echo "Only real pushes to main reach this job"
+
+      # Skip a job entirely for PR validation builds — a common pattern for
+      # anything expensive/deploy-adjacent that shouldn't run on every PR.
+      - job: SkipOnPullRequest
+        pool:
+          vmImage: 'ubuntu-latest'
+        condition: ne(variables['Build.Reason'], 'PullRequest')
+        steps:
+          - script: echo "Not a PR build — proceeding"
+
+  # ---------------------------------------------------------------------------
+  # Cross-job dependency + output variable: job B reads a value job A
+  # computed, and only runs if A explicitly signalled "go".
+  - stage: CrossJobDecision
+    dependsOn: Build
+    jobs:
+      - job: DecideWhetherToDeploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              # Pretend logic: only deploy if there were actual code changes.
+              shouldDeploy=true
+              echo "##vso[task.setvariable variable=shouldDeploy;isOutput=true]$shouldDeploy"
+            name: decision
+            displayName: 'Compute deploy decision'
+
+      - job: Deploy
+        dependsOn: DecideWhetherToDeploy
+        condition: eq(dependencies.DecideWhetherToDeploy.outputs['decision.shouldDeploy'], 'true')
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Deploying because the previous job said to"

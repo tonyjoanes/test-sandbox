@@ -1,0 +1,78 @@
+# =============================================================================
+# 03 — Triggers, Path Filters & Scheduled Runs
+# =============================================================================
+# Controls WHEN a pipeline runs: on push, on pull request, on a cron
+# schedule, or manually. This file shows every trigger type in one place —
+# in a real pipeline you'd normally only need one or two of these blocks.
+# =============================================================================
+
+# --- CI trigger (runs on push) ----------------------------------------------
+# Fires when commits land on the listed branches. Without a 'trigger' block
+# at all, Azure defaults to "run on push to any branch" — being explicit
+# avoids surprise runs on throwaway branches.
+trigger:
+  branches:
+    include:
+      - main
+      - release/*
+    exclude:
+      - release/legacy-*
+  paths:
+    # Only trigger if files under these paths changed — avoids rebuilding
+    # the whole app when someone only edits docs.
+    include:
+      - src/*
+      - '*.csproj'
+    exclude:
+      - docs/*
+      - '**/*.md'
+  # Batch multiple rapid pushes into a single run instead of queuing one
+  # run per push (handy for busy branches / expensive pipelines).
+  batch: true
+
+# --- PR trigger (runs on pull request) --------------------------------------
+# Separate from 'trigger' — this controls validation builds against PRs
+# targeting the listed branches. autoCancel stops stale runs when the PR
+# gets a new push.
+pr:
+  branches:
+    include:
+      - main
+  autoCancel: true
+  drafts: false  # don't waste agent time validating draft PRs
+
+# --- Scheduled trigger (cron) ------------------------------------------------
+# Runs independently of code pushes — e.g. a nightly full regression suite.
+# Cron fields are: minute hour day-of-month month day-of-week (UTC).
+schedules:
+  - cron: '0 2 * * *' # every day at 02:00 UTC
+    displayName: 'Nightly full build'
+    branches:
+      include:
+        - main
+    always: true # run even if nothing changed since the last scheduled run
+
+# --- Tag trigger --------------------------------------------------------------
+# Trigger blocks can also match on tags, useful for release pipelines that
+# only care about "v*" tags rather than every commit.
+# trigger:
+#   tags:
+#     include:
+#       - 'v*'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  - script: |
+      echo "Build.Reason:       $(Build.Reason)"       # Manual, PullRequest, IndividualCI, Schedule, ...
+      echo "Build.SourceBranch: $(Build.SourceBranch)"
+    displayName: 'Show what triggered this run'
+
+# -----------------------------------------------------------------------------
+# NOTE: to disable automatic triggering entirely (e.g. this pipeline is only
+# ever run by another pipeline via 'resources.pipelines', or manually) use:
+#
+#   trigger: none
+#   pr: none
+# -----------------------------------------------------------------------------

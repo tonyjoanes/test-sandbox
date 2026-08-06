@@ -1,0 +1,86 @@
+# =============================================================================
+# 06 — Caching & Artifacts
+# =============================================================================
+# Two DIFFERENT mechanisms that people often conflate:
+#
+#   Cache      speeds up a run by reusing downloaded dependencies (npm/NuGet
+#              packages) BETWEEN runs. Best-effort — a cache miss just falls
+#              back to a normal restore, it never fails the build.
+#
+#   Artifact   the actual OUTPUT of your pipeline (compiled binaries, a
+#              published container image reference, test result files) that
+#              needs to survive from one STAGE/job to another, or be kept
+#              after the run finishes for a release process to consume.
+#
+# Never use a cache to pass build outputs between jobs — caches are
+# best-effort and can be evicted; use artifacts for anything you actually
+# depend on.
+# =============================================================================
+
+trigger:
+  - main
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildAndPublish
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # --- Cache: NuGet packages -------------------------------------
+          # 'key' determines cache identity — here it's derived from the
+          # lockfile/csproj contents, so the cache is invalidated
+          # automatically whenever dependencies change.
+          - task: Cache@2
+            displayName: 'Cache NuGet packages'
+            inputs:
+              key: 'nuget | "$(Agent.OS)" | **/*.csproj'
+              restoreKeys: |
+                nuget | "$(Agent.OS)"
+              path: '$(NUGET_PACKAGES)' # nuget global packages folder
+            env:
+              NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
+
+          - script: dotnet restore
+            displayName: 'Restore (uses cache if present)'
+
+          - script: dotnet build --configuration Release --output $(Build.ArtifactStagingDirectory)/app
+            displayName: 'Build to staging directory'
+
+          - script: dotnet test --logger trx --results-directory $(Agent.TempDirectory)/testresults
+            displayName: 'Run tests, capture results'
+
+          # --- Publish test results (a specialised kind of artifact) -----
+          - task: PublishTestResults@2
+            displayName: 'Publish test results'
+            condition: succeededOrFailed() # publish even if tests failed
+            inputs:
+              testResultsFormat: 'VSTest'
+              testResultsFiles: '$(Agent.TempDirectory)/testresults/*.trx'
+
+          # --- Publish the build output as a pipeline artifact ------------
+          # This is the modern replacement for the older
+          # PublishBuildArtifacts@1 task — faster, and downloadable by
+          # name from any later stage/job.
+          - publish: $(Build.ArtifactStagingDirectory)/app
+            artifact: WebAppDrop
+            displayName: 'Publish build artifact'
+
+  - stage: Deploy
+    dependsOn: Build
+    jobs:
+      - job: DeployJob
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # 'download' pulls a named artifact published by an earlier stage.
+          # Without this, deployment jobs also auto-download all artifacts
+          # by default — being explicit here documents exactly what's used.
+          - download: current
+            artifact: WebAppDrop
+            displayName: 'Download build artifact'
+
+          - script: |
+              echo "Artifact contents:"
+              ls -la $(Pipeline.Workspace)/WebAppDrop
+            displayName: 'Use the downloaded artifact'

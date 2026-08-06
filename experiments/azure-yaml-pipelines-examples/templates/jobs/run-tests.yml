@@ -1,0 +1,41 @@
+# =============================================================================
+# JOB TEMPLATE — run-tests.yml
+# =============================================================================
+# A reusable JOB (not just steps) — use this when the thing you want to
+# dedupe needs its own pool/strategy/condition, not just a list of steps.
+# Consumed with:
+#
+#   jobs:
+#     - template: templates/jobs/run-tests.yml
+#       parameters:
+#         suiteName: 'Unit'
+#         testCommand: 'dotnet test --filter Category=Unit'
+# =============================================================================
+
+parameters:
+  - name: suiteName
+    type: string
+  - name: testCommand
+    type: string
+  - name: vmImage
+    type: string
+    default: 'ubuntu-latest'
+
+jobs:
+  # The job's own name is derived from the parameter so multiple instances
+  # of this template in the same stage don't collide (see 10-full-cicd for
+  # a loop that stamps out several of these).
+  - job: Test_${{ parameters.suiteName }}
+    displayName: '${{ parameters.suiteName }} tests'
+    pool:
+      vmImage: ${{ parameters.vmImage }}
+    steps:
+      - checkout: self
+      - script: ${{ parameters.testCommand }}
+        displayName: 'Run ${{ parameters.suiteName }} suite'
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: 'VSTest'
+          testResultsFiles: '**/*.trx'
+          testRunTitle: '${{ parameters.suiteName }}'

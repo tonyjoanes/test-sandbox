@@ -1,0 +1,47 @@
+# =============================================================================
+# STEP TEMPLATE — build-and-test.yml
+# =============================================================================
+# A reusable list of steps. Consumed with:
+#
+#   steps:
+#     - template: templates/steps/build-and-test.yml
+#       parameters:
+#         dotnetVersion: '8.x'
+#         buildConfiguration: 'Release'
+#         runTests: true
+#
+# Step templates are the finest-grained level of reuse — use them to dedupe
+# a sequence of steps that's copy-pasted across multiple jobs (e.g. every job
+# in the org restores/builds/tests the same way).
+# =============================================================================
+
+parameters:
+  - name: dotnetVersion
+    type: string
+    default: '8.x'
+  - name: buildConfiguration
+    type: string
+    default: 'Release'
+  - name: runTests
+    type: boolean
+    default: true
+
+steps:
+  - task: UseDotNet@2
+    displayName: 'Install .NET SDK ${{ parameters.dotnetVersion }}'
+    inputs:
+      packageType: 'sdk'
+      version: ${{ parameters.dotnetVersion }}
+
+  - script: dotnet restore
+    displayName: 'Restore'
+
+  - script: dotnet build --configuration ${{ parameters.buildConfiguration }} --no-restore
+    displayName: 'Build (${{ parameters.buildConfiguration }})'
+
+  # ${{ if }} on a boolean parameter — this is a COMPILE-TIME decision, so
+  # when runTests=false the test step doesn't just get skipped, it doesn't
+  # exist in the expanded YAML at all.
+  - ${{ if eq(parameters.runTests, true) }}:
+      - script: dotnet test --no-build --configuration ${{ parameters.buildConfiguration }}
+        displayName: 'Test'

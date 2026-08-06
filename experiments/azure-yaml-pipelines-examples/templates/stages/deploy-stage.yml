@@ -1,0 +1,47 @@
+# =============================================================================
+# STAGE TEMPLATE — deploy-stage.yml
+# =============================================================================
+# The coarsest level of reuse — a whole stage, parameterised by environment
+# name. This is how most real orgs avoid writing three near-identical
+# "DeployDev / DeployStaging / DeployProduction" blocks: one template,
+# invoked three times with different parameters (see 10-full-cicd-pipeline.yml).
+# =============================================================================
+
+parameters:
+  - name: environmentName
+    type: string
+  - name: stageName
+    type: string
+  - name: dependsOn
+    type: object
+    default: []
+  - name: requiresManualApproval
+    type: boolean
+    default: false # documents intent; the real gate still lives on the
+                    # Environment resource in the Azure DevOps UI
+
+stages:
+  - stage: ${{ parameters.stageName }}
+    displayName: 'Deploy to ${{ parameters.environmentName }}'
+    dependsOn: ${{ parameters.dependsOn }}
+    jobs:
+      - deployment: Deploy
+        displayName: 'Deploy to ${{ parameters.environmentName }}'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: ${{ parameters.environmentName }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+                - script: echo "Deploying build $(Build.BuildId) to ${{ parameters.environmentName }}"
+                  displayName: 'Deploy'
+                # ${{ if }} can only gate whole YAML nodes (steps, jobs,
+                # stages) at compile time, not lines inside a scalar string
+                # — that's why this is a separate, whole extra step rather
+                # than a conditional echo inside the one above.
+                - ${{ if eq(parameters.requiresManualApproval, true) }}:
+                    - script: echo "(${{ parameters.environmentName }} requires manual approval — configured under Environments > ${{ parameters.environmentName }} > Approvals and checks)"
+                      displayName: 'Approval reminder'

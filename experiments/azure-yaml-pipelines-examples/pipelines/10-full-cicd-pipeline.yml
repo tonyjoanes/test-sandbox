@@ -1,0 +1,139 @@
+# =============================================================================
+# 10 — Full CI/CD Pipeline (put-it-all-together)
+# =============================================================================
+# A realistic pipeline for a .NET web app: build once, run unit + integration
+# tests in parallel, publish an artifact, then promote that SAME artifact
+# through Dev -> Staging -> Production. This combines every concept from
+# files 01-09:
+#
+#   - triggers + PR validation           (03)
+#   - pipeline-level variables            (02)
+#   - multi-stage with dependsOn          (04)
+#   - matrix build across runtimes        (05)
+#   - caching + artifact publish/download (06)
+#   - branch-based conditions             (07)
+#   - deployment jobs + environments      (09)
+#   - job/stage TEMPLATES for reuse       (templates/)
+#
+# In a real repo this file would typically be named azure-pipelines.yml and
+# live at the repository root, but it's numbered here to keep it alongside
+# the rest of the learning suite.
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - '**/*.md'
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  buildConfiguration: 'Release'
+  # A single computed version number, reused by every downstream stage —
+  # this is the "build once, promote everywhere" pattern: we never rebuild
+  # the app per-environment, only redeploy the same artifact.
+  version: '1.0.$(Build.BuildId)'
+
+stages:
+  # ===========================================================================
+  - stage: Build
+    displayName: 'Build & Unit Test'
+    jobs:
+      - job: Build
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Cache@2
+            displayName: 'Cache NuGet packages'
+            inputs:
+              key: 'nuget | "$(Agent.OS)" | **/*.csproj'
+              path: '$(Pipeline.Workspace)/.nuget/packages'
+            env:
+              NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
+
+          # Reusing the step template from 02/03 instead of repeating
+          # restore/build/test inline.
+          - template: ../templates/steps/build-and-test.yml
+            parameters:
+              dotnetVersion: '8.x'
+              buildConfiguration: $(buildConfiguration)
+              runTests: true
+
+          - script: dotnet publish --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/app
+            displayName: 'Publish app to staging directory'
+
+          - publish: $(Build.ArtifactStagingDirectory)/app
+            artifact: drop
+            displayName: 'Publish pipeline artifact'
+
+  # ===========================================================================
+  - stage: CrossPlatformValidation
+    displayName: 'Validate on all supported runtimes'
+    dependsOn: Build
+    jobs:
+      - job: Validate
+        strategy:
+          matrix:
+            linux:
+              imageName: 'ubuntu-latest'
+            windows:
+              imageName: 'windows-latest'
+        pool:
+          vmImage: $(imageName)
+        steps:
+          - template: ../templates/steps/build-and-test.yml
+            parameters:
+              buildConfiguration: $(buildConfiguration)
+              runTests: false # already tested in Build; this stage only
+                               # proves the app compiles cleanly everywhere
+
+  # ===========================================================================
+  - stage: IntegrationTests
+    displayName: 'Integration tests (parallel suites)'
+    dependsOn: Build
+    jobs:
+      # Two job-template instances stamped out with different parameters —
+      # each becomes its own independent job that runs in parallel with the
+      # other, both gated only on Build succeeding.
+      - template: ../templates/jobs/run-tests.yml
+        parameters:
+          suiteName: 'Api'
+          testCommand: 'dotnet test --filter Category=Api'
+      - template: ../templates/jobs/run-tests.yml
+        parameters:
+          suiteName: 'Database'
+          testCommand: 'dotnet test --filter Category=Database'
+
+  # ===========================================================================
+  # Three environment promotions, each just an invocation of the same stage
+  # template with different parameters — this is the payoff of templating:
+  # adding a fourth environment is a 5-line addition, not a copy-pasted
+  # 40-line stage.
+  - template: ../templates/stages/deploy-stage.yml
+    parameters:
+      stageName: DeployDev
+      environmentName: 'dev'
+      dependsOn:
+        - CrossPlatformValidation
+        - IntegrationTests
+      requiresManualApproval: false
+
+  - template: ../templates/stages/deploy-stage.yml
+    parameters:
+      stageName: DeployStaging
+      environmentName: 'staging'
+      dependsOn: DeployDev
+      requiresManualApproval: true
+
+  - template: ../templates/stages/deploy-stage.yml
+    parameters:
+      stageName: DeployProduction
+      environmentName: 'production'
+      dependsOn: DeployStaging
+      requiresManualApproval: true
