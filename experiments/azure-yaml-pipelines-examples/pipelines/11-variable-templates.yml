@@ -1,0 +1,105 @@
+# =============================================================================
+# 11 — Variable Templates
+# =============================================================================
+# 'variables:' accepts a mix of inline definitions AND '- template:'
+# includes, in any order — this file shows both a fixed-value template and
+# a parameterised, environment-aware one (see templates/variables/).
+# =============================================================================
+
+trigger:
+  - main
+
+stages:
+  - stage: Build
+    variables:
+      # A plain template include — pulls in dotnetVersion, nodeVersion,
+      # artifactName, vmImageLinux, vmImageWindows as-is.
+      - template: ../templates/variables/common-variables.yml
+
+      # Inline variables can sit alongside template includes freely.
+      - name: buildConfiguration
+        value: 'Release'
+    jobs:
+      - job: Build
+        pool:
+          vmImage: $(vmImageLinux) # <- came from the template, not defined here
+        steps:
+          - script: |
+              echo "SDK version from template: $(dotnetVersion)"
+              echo "Artifact name from template: $(artifactName)"
+              echo "Configuration (inline):     $(buildConfiguration)"
+            displayName: 'Show variables sourced from the shared template'
+
+  # ---------------------------------------------------------------------------
+  # Same stage, deployed three times, each pulling a DIFFERENT variable set
+  # out of the SAME parameterised template — this is the payoff: environment
+  # config lives in one file instead of being duplicated per stage.
+  - stage: DeployDev
+    dependsOn: Build
+    variables:
+      - template: ../templates/variables/per-environment-variables.yml
+        parameters:
+          environmentName: 'dev'
+    jobs:
+      - deployment: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: |
+                    echo "Deploying to $(environmentName)"
+                    echo "API base URL: $(apiBaseUrl)"
+                    echo "Replica count: $(replicaCount)"
+                    echo "Log level: $(logLevel)"
+
+  - stage: DeployStaging
+    dependsOn: DeployDev
+    variables:
+      - template: ../templates/variables/per-environment-variables.yml
+        parameters:
+          environmentName: 'staging'
+    jobs:
+      - deployment: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'staging'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: |
+                    echo "Deploying to $(environmentName)"
+                    echo "API base URL: $(apiBaseUrl)"
+                    echo "Replica count: $(replicaCount)"
+
+  - stage: DeployProduction
+    dependsOn: DeployStaging
+    variables:
+      - template: ../templates/variables/per-environment-variables.yml
+        parameters:
+          environmentName: 'production'
+    jobs:
+      - deployment: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: |
+                    echo "Deploying to $(environmentName)"
+                    echo "API base URL: $(apiBaseUrl)"
+                    echo "Replica count: $(replicaCount)"
+
+# -----------------------------------------------------------------------------
+# Passing an unlisted value, e.g. environmentName: 'qa', fails the pipeline
+# at compile time with "Value 'qa' does not match the list of allowed
+# values" — because per-environment-variables.yml declares
+# 'values: [dev, staging, production]' on that parameter (see 03/09 for more
+# on parameter 'values:' restrictions, and templates/extends/base-pipeline.yml
+# for the same technique used to lock down whole pipeline structures).
+# -----------------------------------------------------------------------------

@@ -1,0 +1,57 @@
+# =============================================================================
+# VARIABLE TEMPLATE — per-environment-variables.yml (parameterised)
+# =============================================================================
+# Variable templates can take parameters too, and branch on them at
+# compile-time with ${{ if }}/${{ elseif }}/${{ else }} — this is how you
+# get "one file defines the variables for every environment" instead of
+# copy-pasting a variables block per stage.
+#
+# Consumed with:
+#
+#   variables:
+#     - template: templates/variables/per-environment-variables.yml
+#       parameters:
+#         environmentName: 'staging'
+# =============================================================================
+
+parameters:
+  - name: environmentName
+    type: string
+    values: # restrict to a known set — invalid values fail at compile time
+      - dev
+      - staging
+      - production
+
+variables:
+  # Compile-time branching selects an entirely different set of variable
+  # definitions depending on the parameter — none of the "other" branches
+  # exist in the expanded YAML, so there's no risk of a dev secret name
+  # leaking into a production run by accident.
+  - ${{ if eq(parameters.environmentName, 'dev') }}:
+      - name: apiBaseUrl
+        value: 'https://api-dev.example.internal'
+      - name: replicaCount
+        value: '1'
+      - name: logLevel
+        value: 'Debug'
+
+  - ${{ if eq(parameters.environmentName, 'staging') }}:
+      - name: apiBaseUrl
+        value: 'https://api-staging.example.internal'
+      - name: replicaCount
+        value: '2'
+      - name: logLevel
+        value: 'Information'
+
+  - ${{ if eq(parameters.environmentName, 'production') }}:
+      - name: apiBaseUrl
+        value: 'https://api.example.com'
+      - name: replicaCount
+        value: '6'
+      - name: logLevel
+        value: 'Warning'
+
+  # A variable derived from the parameter itself, common to every branch —
+  # no need to repeat it inside each ${{ if }} block above.
+  - name: environmentName
+    value: ${{ parameters.environmentName }}

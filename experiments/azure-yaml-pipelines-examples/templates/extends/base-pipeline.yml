@@ -1,0 +1,86 @@
+# =============================================================================
+# EXTENDS TEMPLATE — base-pipeline.yml
+# =============================================================================
+# The most powerful (and most restrictive) template pattern. A normal
+# 'template:' reference INSERTS content into whatever the consuming file
+# already defines. 'extends:' INVERTS that relationship: the consuming
+# pipeline hands control to THIS file, which owns the entire stages/jobs
+# structure. The consumer may only supply values for the parameters this
+# file declares — it cannot add arbitrary stages/jobs/steps of its own.
+#
+# This is the pattern platform/security teams use to enforce "every
+# pipeline in the org MUST run a security scan, MUST deploy through an
+# approved set of stages, and CANNOT bypass that no matter what a team
+# writes in their own YAML." It's enforced two ways at once:
+#
+#   1. Structurally — a pipeline that uses 'extends:' has nowhere to put
+#      extra stages; there IS no stages/jobs key available to it (see
+#      pipelines/12-extends-and-loops.yml for what a consumer looks like).
+#
+#   2. Administratively — an Azure DevOps org/project setting
+#      ("Limit job authorization scope" + a required-template check on the
+#      repository) can be configured so pipelines are REJECTED at queue
+#      time unless they extend from an approved template list. That
+#      enforcement lives in Project Settings, not in any YAML file, which
+#      is exactly the point — a team can't edit their way around it.
+#
+# Note the special 'stepList' parameter type below — it exists specifically
+# so an extends template can accept a whole block of consumer-authored
+# steps and splice them in at a controlled point, sandwiched between
+# mandatory steps the consumer never sees and can't remove.
+# =============================================================================
+
+parameters:
+  - name: environmentName
+    type: string
+    values: # compile-time validated — an unlisted value fails the whole run
+      - dev
+      - staging
+      - production
+
+  - name: buildSteps
+    type: stepList # a whole list of arbitrary 'steps:' content, supplied by the consumer
+    default: []
+
+  - name: enableSecurityScan
+    type: boolean
+    default: true
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # --- MANDATORY, runs for every consumer, no opt-out -------------
+          - script: echo "Org-mandated pre-build policy check"
+            displayName: 'Policy check (required)'
+
+          # --- Consumer-supplied steps, inserted here ----------------------
+          # This is the 'stepList' parameter being spliced in. The consumer
+          # controls WHAT happens here, but not whether the steps around it
+          # run.
+          - ${{ parameters.buildSteps }}
+
+          # --- MANDATORY, gated only by a boolean toggle (not removable) --
+          - ${{ if eq(parameters.enableSecurityScan, true) }}:
+              - script: echo "Running mandatory dependency + secret scan"
+                displayName: 'Security scan (required)'
+
+  - stage: Deploy
+    displayName: 'Deploy to ${{ parameters.environmentName }}'
+    dependsOn: Build
+    jobs:
+      - deployment: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        # Every consumer deploys through the same Environment-based approval
+        # mechanism — see templates/stages/deploy-stage.yml / 09 for what
+        # that gate looks like in the Azure DevOps UI.
+        environment: ${{ parameters.environmentName }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Deploying to ${{ parameters.environmentName }} via the org-approved path"

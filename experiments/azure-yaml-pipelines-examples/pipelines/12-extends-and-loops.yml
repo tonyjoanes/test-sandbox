@@ -1,0 +1,112 @@
+# =============================================================================
+# 12 — ${{ each }} Loops & extends: Governance Templates
+# =============================================================================
+# Two advanced template patterns in one file:
+#
+#   PART A: ${{ each }} — generating N steps/jobs from a list parameter
+#           instead of a fixed matrix. See templates/steps/steps-from-list.yml
+#           and templates/jobs/jobs-from-list.yml.
+#
+#   PART B: extends: — handing the ENTIRE pipeline structure to a base
+#           template (templates/extends/base-pipeline.yml), a pattern
+#           platform/security teams use to make certain stages
+#           (security scans, approved deploy paths) non-optional across
+#           every pipeline in an org.
+#
+# A single YAML file can't both define its own 'stages:' AND use
+# 'extends:' at the pipeline root (extends takes over the whole document),
+# so this file is split into two illustrative parts — only PART B's
+# 'extends:' block is "live"; PART A is shown as the pipeline body it would
+# otherwise contain, for side-by-side comparison. In your own repo these
+# would be two separate files.
+# =============================================================================
+
+# =============================================================================
+# PART A — ${{ each }} loops (reference only; not active while extends: is
+# used below). This is what a normal, non-extends pipeline consuming the
+# each-loop templates looks like:
+# =============================================================================
+#
+# trigger:
+#   - main
+#
+# stages:
+#   - stage: Lint
+#     jobs:
+#       - job: RunLinters
+#         pool:
+#           vmImage: 'ubuntu-latest'
+#         steps:
+#           - template: ../templates/steps/steps-from-list.yml
+#             parameters:
+#               lintCommands:
+#                 - name: 'ESLint'
+#                   command: 'npx eslint .'
+#                 - name: 'Prettier'
+#                   command: 'npx prettier --check .'
+#                 - name: 'Stylelint'
+#                   command: 'npx stylelint "**/*.css"'
+#           # Expands to three independent, individually-named steps —
+#           # each shows its own pass/fail in the UI, unlike a single
+#           # script that loops internally and reports one combined result.
+#
+#   - stage: BuildServices
+#     dependsOn: Lint
+#     jobs:
+#       - template: ../templates/jobs/jobs-from-list.yml
+#         parameters:
+#           services:
+#             - name: 'Api'
+#               path: 'src/services/api'
+#               vmImage: 'ubuntu-latest'
+#             - name: 'Worker'
+#               path: 'src/services/worker'
+#               vmImage: 'ubuntu-latest'
+#             - name: 'LegacyBatchJob'
+#               path: 'src/services/legacy'
+#               vmImage: 'windows-latest'
+#           # Expands to three jobs: Build_Api, Build_Worker,
+#           # Build_LegacyBatchJob — all running in parallel, the Windows
+#           # one on a different image, all from one loop instead of three
+#           # copy-pasted job blocks.
+
+# =============================================================================
+# PART B — extends: (this is the ACTIVE content of this file)
+# =============================================================================
+# A pipeline using 'extends:' may ONLY have trigger/pr/resources/variables
+# and the 'extends' block itself at the root — there is no 'stages:' key
+# available here. Every stage this pipeline runs comes from
+# templates/extends/base-pipeline.yml; this file just supplies parameter
+# values into the slots that template exposes.
+# =============================================================================
+
+trigger:
+  - main
+
+extends:
+  template: ../templates/extends/base-pipeline.yml
+  parameters:
+    environmentName: 'staging'
+    enableSecurityScan: true
+    # 'buildSteps' fills the stepList slot in the base template — these
+    # steps run SANDWICHED between the org's mandatory policy-check step
+    # and its mandatory security-scan step, in whatever order the base
+    # template chose. This consumer cannot skip or reorder those two.
+    buildSteps:
+      - script: dotnet restore
+        displayName: 'Restore'
+      - script: dotnet build --configuration Release
+        displayName: 'Build'
+      - script: dotnet test --configuration Release
+        displayName: 'Test'
+
+# -----------------------------------------------------------------------------
+# Try changing environmentName above to 'qa' — the pipeline fails to compile
+# because the base template restricts that parameter to
+# [dev, staging, production] via 'values:'. Try deleting the 'extends:'
+# block and adding a 'stages:' key instead — Azure DevOps rejects that too,
+# because a pipeline that extends a template isn't allowed to define its
+# own top-level stages/jobs/steps. Both failure modes are the point: this
+# is what makes 'extends:' a governance tool rather than just another form
+# of 'template:'.
+# -----------------------------------------------------------------------------
