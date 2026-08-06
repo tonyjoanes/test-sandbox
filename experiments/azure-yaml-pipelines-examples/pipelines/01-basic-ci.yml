@@ -1,0 +1,57 @@
+# =============================================================================
+# 01 — Basic CI Pipeline
+# =============================================================================
+# The smallest useful Azure Pipeline. Demonstrates the four building blocks
+# every pipeline starts with:
+#
+#   trigger  -> what causes the pipeline to run
+#   pool     -> what machine (agent) the work runs on
+#   steps    -> the flat list of things to do (no stages/jobs needed for
+#               something this small — Azure implicitly wraps single-job
+#               pipelines in one stage + one job for you)
+#
+# This is the YAML equivalent of "hello world" CI: restore, build, test.
+# =============================================================================
+
+# Run automatically whenever a commit lands on main.
+trigger:
+  - main
+
+# The agent pool that will execute the job. 'vmImage' picks a Microsoft-hosted
+# agent image (ephemeral VM, torn down after the run). Alternatives:
+#   vmImage: 'windows-latest'
+#   vmImage: 'macOS-latest'
+# Or point at a self-hosted pool:
+#   pool:
+#     name: 'my-self-hosted-pool'
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  # 'script' is shorthand for running a command line on the agent's default
+  # shell (bash on Linux/macOS, cmd on Windows).
+  - script: echo "Starting build for commit $(Build.SourceVersion)"
+    displayName: 'Announce build'
+
+  # A 'task' invokes a pre-built, versioned unit of work from the Azure
+  # DevOps task catalog — this one restores/builds/tests a .NET project.
+  # The '@1' pins the major version of the task so upgrades to the task
+  # itself don't silently change your pipeline's behaviour.
+  - task: UseDotNet@2
+    displayName: 'Install .NET SDK'
+    inputs:
+      packageType: 'sdk'
+      version: '8.x'
+
+  - script: dotnet restore
+    displayName: 'Restore dependencies'
+
+  - script: dotnet build --configuration Release --no-restore
+    displayName: 'Build (Release)'
+
+  - script: dotnet test --no-build --configuration Release
+    displayName: 'Run unit tests'
+
+# Nothing here does anything Azure-DevOps-specific beyond the 'task' syntax —
+# this same shape works for npm/yarn, Maven/Gradle, pip, Go, etc. by swapping
+# the script/task lines for the equivalent build tool commands.

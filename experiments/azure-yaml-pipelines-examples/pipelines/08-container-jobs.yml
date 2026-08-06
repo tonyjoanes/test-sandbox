@@ -1,0 +1,72 @@
+# =============================================================================
+# 08 — Container Jobs & Service Containers
+# =============================================================================
+# 'container' on a job runs every step INSIDE that Docker image instead of
+# directly on the agent VM — useful for pinning an exact toolchain version
+# regardless of what the hosted image ships with.
+#
+# 'services' attaches sidecar containers (a database, a cache, a queue) that
+# live for the duration of the job — the classic use case is spinning up a
+# real Postgres/Redis for integration tests instead of mocking them.
+# =============================================================================
+
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+# Job runs its steps inside this image rather than directly on the agent.
+# Handy for exact toolchain pinning independent of the hosted agent's
+# pre-installed versions.
+container: node:20-bullseye
+
+resources:
+  containers:
+    - container: postgres
+      image: postgres:16
+      env:
+        POSTGRES_USER: appuser
+        POSTGRES_PASSWORD: apppassword
+        POSTGRES_DB: appdb
+      ports:
+        - 5432:5432
+      options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+
+    - container: redis
+      image: redis:7
+      ports:
+        - 6379:6379
+
+steps:
+  - script: node --version
+    displayName: 'Confirm we are running inside the node:20 container'
+
+  - script: npm ci
+    displayName: 'Install dependencies'
+
+  - script: npm run build
+    displayName: 'Build'
+
+# -----------------------------------------------------------------------------
+# The block above shows a whole-pipeline container. In practice you'll more
+# often want the container scoped to ONE job within a multi-job pipeline,
+# with sidecar services attached to that same job — shown below as a
+# reference (this second document is illustrative, not chained to the first).
+# -----------------------------------------------------------------------------
+# stages:
+#   - stage: IntegrationTests
+#     jobs:
+#       - job: RunAgainstRealDatabase
+#         pool:
+#           vmImage: 'ubuntu-latest'
+#         container: node:20-bullseye
+#         services:
+#           postgres: postgres
+#           redis: redis
+#         steps:
+#           - script: |
+#               # Service containers are reachable by their resource name as
+#               # hostname from within the job's container network.
+#               npm run test:integration -- --db-host=postgres --redis-host=redis
+#             displayName: 'Run integration tests against live Postgres + Redis'

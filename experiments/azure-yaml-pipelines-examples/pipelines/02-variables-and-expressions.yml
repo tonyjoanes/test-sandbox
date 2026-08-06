@@ -1,0 +1,79 @@
+# =============================================================================
+# 02 — Variables & Expression Syntax
+# =============================================================================
+# Azure Pipelines has THREE different variable/expression syntaxes, and mixing
+# them up is one of the most common sources of confusion. This file exists to
+# make the difference concrete:
+#
+#   ${{ variables.x }}   Compile-time (template expansion). Resolved BEFORE
+#                        the pipeline is submitted to the agent — literally a
+#                        text substitution pass over the YAML. Can be used to
+#                        change pipeline STRUCTURE (loop over a list, decide
+#                        whether a job even exists).
+#
+#   $[ variables.x ]     Runtime expression. Resolved when the stage/job
+#                        starts, AFTER template expansion. Used for things
+#                        like dependency conditions that need output
+#                        variables from a previous job.
+#
+#   $(x)                 Macro syntax. Resolved just before each task runs,
+#                        as a simple find-and-replace inside string inputs.
+#                        This is what you use inside 'script' blocks.
+# =============================================================================
+
+trigger:
+  - main
+
+# Pipeline-level variables: available to every stage/job/step below.
+variables:
+  buildConfiguration: 'Release'
+  isMain: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  # Group references pull secrets/values from an Azure DevOps Variable Group
+  # (Library > Variable groups) rather than the repo — use this for anything
+  # environment-specific or secret. Uncomment once the group exists:
+  # - group: 'shared-app-settings'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+  # Macro syntax ($(...)) — expanded as plain text right before this step
+  # runs. Works for both built-in variables (Build.BuildId) and custom ones.
+  - script: |
+      echo "Build number: $(Build.BuildId)"
+      echo "Configuration: $(buildConfiguration)"
+      echo "Branch: $(Build.SourceBranch)"
+    displayName: 'Show macro-syntax variables'
+
+  # Setting a variable at runtime so a LATER step can read it. The special
+  # 'isOutput=true' makes it visible to other jobs (see 03/07 for cross-job
+  # consumption via dependencies).
+  - script: |
+      echo "##vso[task.setvariable variable=greeting]Hello from step 1"
+    displayName: 'Set a variable for later steps'
+
+  - script: echo "$(greeting)"
+    displayName: 'Read the variable set above'
+
+  # Condition using a runtime expression ($[...]) evaluated against the
+  # pipeline-level variable declared above.
+  - script: echo "This only prints on main"
+    displayName: 'Conditional step (runtime expression)'
+    condition: eq(variables.isMain, true)
+
+  # Compile-time expression (${{ }}) — this decides whether the step exists
+  # in the expanded YAML at all. Useful for parameterised templates (see the
+  # templates/ folder) where you want to omit whole steps based on inputs
+  # known before the run starts.
+  - ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      - script: echo "This step only EXISTS in the expanded YAML for PR builds"
+        displayName: 'Compile-time conditional step'
+
+  # System predefined variables — a handful of the most commonly used ones.
+  # Full reference: https://learn.microsoft.com/azure/devops/pipelines/build/variables
+  - script: |
+      echo "Repo:        $(Build.Repository.Name)"
+      echo "Agent OS:    $(Agent.OS)"
+      echo "Work dir:    $(System.DefaultWorkingDirectory)"
+      echo "Pipeline id: $(System.DefinitionId)"
+    displayName: 'Show predefined system variables'

@@ -1,0 +1,106 @@
+# =============================================================================
+# 04 — Multi-Stage Pipelines
+# =============================================================================
+# Real pipelines are rarely "one job that does everything". Azure Pipelines
+# groups work into a hierarchy:
+#
+#   Pipeline
+#     └── Stage(s)    logical phase, e.g. Build / Test / Deploy
+#           └── Job(s)      unit of work assigned to ONE agent
+#                 └── Step(s)   individual commands/tasks, run sequentially
+#
+# Stages run sequentially by default, each waiting for the previous one to
+# succeed — but that ordering is really driven by 'dependsOn', which this
+# file makes explicit so you can see how to change it (parallel stages,
+# fan-out/fan-in, conditional stages).
+# =============================================================================
+
+trigger:
+  - main
+
+variables:
+  buildConfiguration: 'Release'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build'
+    jobs:
+      - job: BuildJob
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Building..."
+          - script: echo "##vso[task.setvariable variable=artifactVersion;isOutput=true]1.0.$(Build.BuildId)"
+            name: setVersion # step name so other stages can read this output var
+            displayName: 'Compute build version'
+
+  # ---------------------------------------------------------------------------
+  - stage: Test
+    displayName: 'Test'
+    # Implicit default would already be "depends on the previous stage", but
+    # being explicit documents intent and lets you reorder stages freely
+    # later without accidentally changing the dependency graph.
+    dependsOn: Build
+    condition: succeeded('Build')
+    jobs:
+      - job: UnitTests
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Running unit tests..."
+
+      - job: IntegrationTests
+        pool:
+          vmImage: 'ubuntu-latest'
+        # No dependsOn between these two jobs -> they run IN PARALLEL on
+        # separate agents, both gated only by the Build stage succeeding.
+        steps:
+          - script: echo "Running integration tests..."
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Test
+    condition: succeeded('Test')
+    variables:
+      # Reading the output variable produced back in the Build stage.
+      # Syntax: stageDependencies.<stage>.<job>.outputs['<stepName>.<varName>']
+      artifactVersion: $[ stageDependencies.Build.BuildJob.outputs['setVersion.artifactVersion'] ]
+    jobs:
+      - job: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Deploying version $(artifactVersion) to Dev"
+
+  # ---------------------------------------------------------------------------
+  # A stage that only runs for main — everything else (feature branches, PRs)
+  # skips it entirely. Combine this with 'dependsOn' fan-out below to see how
+  # two later stages can both depend on the same earlier one and run in
+  # parallel with each other once it's done.
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: DeployDev
+    condition: and(succeeded('DeployDev'), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Deploy
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Deploying to Staging"
+
+  - stage: Notify
+    displayName: 'Notify team'
+    # Fan-in: depends on BOTH prior stages finishing (in any state — see
+    # 07-conditions-and-dependencies.yml for 'always()' vs 'succeeded()').
+    dependsOn:
+      - DeployDev
+      - DeployStaging
+    condition: always()
+    jobs:
+      - job: SendNotification
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Pipeline finished — notifying team"

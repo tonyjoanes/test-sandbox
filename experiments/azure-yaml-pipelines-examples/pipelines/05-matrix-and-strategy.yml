@@ -1,0 +1,70 @@
+# =============================================================================
+# 05 — Matrix & Parallel Execution Strategies
+# =============================================================================
+# A job's 'strategy' controls how it's multiplied across agents:
+#
+#   matrix    run the SAME steps multiple times with DIFFERENT variable
+#             values (e.g. build against 3 OS/runtime combinations)
+#
+#   parallel  run the SAME steps multiple times as N identical slices,
+#             typically used to shard a test suite (each slice gets
+#             System.JobPositionInPhase / System.TotalJobsInPhase to know
+#             which subset of tests to run)
+# =============================================================================
+
+trigger:
+  - main
+
+stages:
+  - stage: CrossPlatformBuild
+    displayName: 'Build on every OS / runtime combination'
+    jobs:
+      - job: Build
+        strategy:
+          matrix:
+            linux_net8:
+              imageName: 'ubuntu-latest'
+              dotnetVersion: '8.x'
+            linux_net6:
+              imageName: 'ubuntu-latest'
+              dotnetVersion: '6.x'
+            windows_net8:
+              imageName: 'windows-latest'
+              dotnetVersion: '8.x'
+            macos_net8:
+              imageName: 'macOS-latest'
+              dotnetVersion: '8.x'
+          # Cap concurrent legs — useful if your org has limited parallel
+          # agent licenses and don't want one job to grab them all.
+          maxParallel: 2
+        pool:
+          vmImage: $(imageName)
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: 'sdk'
+              version: $(dotnetVersion)
+          - script: dotnet build --configuration Release
+            displayName: 'Build with .NET $(dotnetVersion) on $(imageName)'
+        # Each matrix leg shows up in the Azure DevOps UI as its own job,
+        # e.g. "Build linux_net8", "Build windows_net8" — easy to spot which
+        # combination failed.
+
+  - stage: ShardedTests
+    displayName: 'Run test suite across parallel shards'
+    dependsOn: CrossPlatformBuild
+    jobs:
+      - job: RunTests
+        strategy:
+          parallel: 4 # split into 4 identical job instances
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              echo "This is shard $(System.JobPositionInPhase) of $(System.TotalJobsInPhase)"
+              # A real test runner would use these two variables to select
+              # a slice of the suite, e.g.:
+              #   dotnet test --filter "Slice=$(System.JobPositionInPhase)"
+              # or feed them to a test-splitting tool (many CI test runners
+              # have native "--shard i/n" support).
+            displayName: 'Run this shard'

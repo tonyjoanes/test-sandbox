@@ -1,0 +1,114 @@
+# =============================================================================
+# 09 — Deployment Jobs & Environments
+# =============================================================================
+# A 'deployment' job is a special job type for anything that ships code
+# somewhere. Two things it gives you that a plain 'job' doesn't:
+#
+#   1. 'environment:' ties the job to an Azure DevOps Environment resource.
+#      Environments are where you configure things that CANNOT live in YAML
+#      for security reasons — manual approval gates, business hours checks,
+#      branch-control checks. These are configured once in the Azure DevOps
+#      UI (Pipelines > Environments > <env> > Approvals and checks) and then
+#      apply automatically to every pipeline that deploys to that
+#      environment. This is deliberate: approvers shouldn't be editable by
+#      whoever can edit the YAML.
+#
+#   2. 'strategy:' describes HOW the deployment rolls out — runOnce (deploy
+#      once, no rollout choreography), rolling (batch through a VM group),
+#      or canary (rollout to canary machines/traffic split first). Each
+#      strategy exposes deploy/routeTraffic/postRouteTraffic/on:failure
+#      lifecycle hooks.
+# =============================================================================
+
+trigger:
+  - main
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Building..."
+          - publish: $(System.DefaultWorkingDirectory)
+            artifact: drop
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy to Dev'
+    dependsOn: Build
+    jobs:
+      - deployment: DeployWebApp
+        displayName: 'Deploy web app'
+        pool:
+          vmImage: 'ubuntu-latest'
+        # No approval gate configured on "dev" — deploys flow straight
+        # through automatically. Good for a low-stakes environment.
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Deploying build $(Build.BuildId) to Dev"
+                - script: echo "Smoke testing Dev..."
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployStaging
+    displayName: 'Deploy to Staging'
+    dependsOn: DeployDev
+    jobs:
+      - deployment: DeployWebApp
+        pool:
+          vmImage: 'ubuntu-latest'
+        # 'staging' environment (configured in the Azure DevOps UI) has a
+        # required-reviewer check attached — the pipeline run will PAUSE
+        # here in the portal until someone approves it. That pause and the
+        # reviewer list live entirely in the Environment resource, not here.
+        environment: 'staging'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Deploying build $(Build.BuildId) to Staging"
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployProduction
+    displayName: 'Deploy to Production (canary)'
+    dependsOn: DeployStaging
+    jobs:
+      - deployment: DeployWebApp
+        pool:
+          vmImage: 'ubuntu-latest'
+        # 'production' typically has BOTH a required-reviewer check and a
+        # business-hours check configured in the UI, on top of the canary
+        # rollout choreography defined here in YAML.
+        environment: 'production'
+        strategy:
+          canary:
+            increments: [10, 25, 50, 100] # percentage of traffic/instances per wave
+            deploy:
+              steps:
+                - script: echo "Deploying canary increment"
+            postRouteTraffic:
+              steps:
+                - script: echo "Monitoring health metrics after routing traffic..."
+            on:
+              failure:
+                steps:
+                  - script: echo "Canary failed — rolling back"
+              success:
+                steps:
+                  - script: echo "Canary succeeded — proceeding to next increment"
+
+# -----------------------------------------------------------------------------
+# NOTE on 'environment:' with resource targeting — you can also scope a
+# deployment to a specific resource within an environment (e.g. one VM in a
+# VM group, or a specific Kubernetes namespace):
+#
+#   environment: 'production.frontend-namespace'
+#
+# and Azure DevOps will show per-resource deployment history in the
+# Environments view, which is invaluable for auditing "what version is
+# running where" across a fleet.
+# -----------------------------------------------------------------------------
