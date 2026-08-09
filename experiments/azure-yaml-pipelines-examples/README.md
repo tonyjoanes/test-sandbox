@@ -59,6 +59,7 @@ Every example below calls out which syntax it's using and why.
 | 10 | [`pipelines/10-full-cicd-pipeline.yml`](pipelines/10-full-cicd-pipeline.yml) | Everything above combined into one realistic build-once/promote-everywhere pipeline, using templates |
 | 11 | [`pipelines/11-variable-templates.yml`](pipelines/11-variable-templates.yml) | Variable templates — fixed shared values, and a parameterised template that branches per environment |
 | 12 | [`pipelines/12-extends-and-loops.yml`](pipelines/12-extends-and-loops.yml) | `${{ each }}` loops for dynamic step/job generation, plus `extends:` governance templates |
+| 13 | [`pipelines/13-resilience-and-timeouts.yml`](pipelines/13-resilience-and-timeouts.yml) | `timeoutInMinutes`, `cancelTimeoutInMinutes`, `continueOnError` (step & job), `retryCountOnTaskFailure`, guaranteed cleanup steps |
 
 ### Reusable Templates
 
@@ -98,6 +99,7 @@ templates, `${{ each }}`, and `extends` respectively.
 4. **`templates/steps`, `templates/jobs`, `templates/stages`, then 10**: once the individual concepts make sense, see how the three basic template kinds compose into one pipeline you'd actually put in a repo.
 5. **`templates/variables`, then 11**: centralising and environment-branching variables via templates.
 6. **`templates/*/…-from-list.yml`, `templates/extends`, then 12**: the two advanced patterns — generating steps/jobs from a list with `${{ each }}`, and locking down pipeline structure org-wide with `extends`.
+7. **13**: resilience knobs — timeouts, retries, and `continueOnError` — for when a step hangs, flakes, or shouldn't be allowed to block the rest of the run.
 
 ---
 
@@ -112,6 +114,10 @@ templates, `${{ each }}`, and `extends` respectively.
 - **`${{ each x in parameters.list }}`** — a compile-time loop inside a template that stamps out one copy of a YAML node (a step, a job) per item in a list/object parameter. Use it instead of `strategy.matrix` when the generated units aren't identical (different steps, different pools) rather than just different variable values.
 - **`extends:`** — the inverse of `template:`. A pipeline that uses `extends:` hands its *entire* structure to the named template and may only supply parameter values — it has no `stages:`/`jobs:`/`steps:` key of its own. This is how platform/security teams make stages (a security scan, an approved deploy path) mandatory across every pipeline in an org, rather than merely reusable. Parameter `values:` restriction (an allow-list on a parameter's valid inputs, checked at compile time) is often layered on top for the same reason.
 - **Artifact vs Cache** — an artifact is pipeline *output* you depend on (build binaries, test results); a cache is a best-effort speed optimisation for *inputs* (downloaded packages) that can be silently missed without failing the build. Never use a cache to pass required data between jobs.
+- **`timeoutInMinutes`** — set on a job (kills the whole job, all remaining steps) or a step (kills just that step, independent of the job's own budget). Defaults to 60 minutes on Microsoft-hosted agents but is *unlimited* on self-hosted agents — always set it explicitly there.
+- **`cancelTimeoutInMinutes`** — the grace period given to steps with `condition: always()` to finish after a job is cancelled or times out, before the agent process is force-killed. Pair it with an always-run cleanup step (see `13`).
+- **`continueOnError`** — on a *step*, a failure shows as "SucceededWithIssues" but later steps still run and the job isn't marked failed. On a *job*, a failure still lets dependent jobs (`dependsOn`) proceed instead of being skipped. Reach for it only when the failure is genuinely non-blocking — never on anything that leaves the system in a broken state if skipped.
+- **`retryCountOnTaskFailure`** — automatically re-runs a single step up to N more times on failure, before giving up. Only safe for steps whose failure mode is transient (a flaky network call); never for non-idempotent side effects, where a retry after a partial failure could double it up.
 
 ---
 
