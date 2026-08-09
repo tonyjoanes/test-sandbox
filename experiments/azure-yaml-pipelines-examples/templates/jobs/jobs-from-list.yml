@@ -1,0 +1,56 @@
+# =============================================================================
+# JOB TEMPLATE — jobs-from-list.yml (${{ each }} over an object list)
+# =============================================================================
+# The job-level equivalent of steps-from-list.yml: generate one JOB per
+# entry in a list parameter, each with its own name/pool/dependsOn — more
+# flexible than 'strategy.matrix' because every generated job can differ
+# structurally (different steps entirely), not just by variable values.
+#
+# Consumed with:
+#
+#   jobs:
+#     - template: templates/jobs/jobs-from-list.yml
+#       parameters:
+#         services:
+#           - name: 'Api'
+#             path: 'src/services/api'
+#             vmImage: 'ubuntu-latest'
+#           - name: 'Worker'
+#             path: 'src/services/worker'
+#             vmImage: 'ubuntu-latest'
+#           - name: 'WindowsAgent'
+#             path: 'src/services/legacy'
+#             vmImage: 'windows-latest'
+# =============================================================================
+
+parameters:
+  - name: services
+    type: object
+    default: []
+
+jobs:
+  - ${{ each service in parameters.services }}:
+      # Each generated job gets a unique, deterministic name derived from
+      # the loop variable — required, since two jobs can't share a name.
+      - job: Build_${{ service.name }}
+        displayName: 'Build ${{ service.name }}'
+        pool:
+          vmImage: ${{ service.vmImage }}
+        steps:
+          - script: echo "Building ${{ service.name }} from ${{ service.path }}"
+            displayName: 'Build'
+          - script: echo "Testing ${{ service.name }}"
+            displayName: 'Test'
+
+# -----------------------------------------------------------------------------
+# Matrix vs. each — which to reach for:
+#
+#   strategy.matrix   same steps, different VARIABLE VALUES (e.g. same build
+#                     script against 3 .NET versions). Simpler, and Azure
+#                     DevOps groups the legs together in the UI.
+#
+#   ${{ each }}       different steps/pools/dependsOn per item — needed when
+#                     the generated jobs aren't structurally identical (e.g.
+#                     one microservice needs an extra packaging step the
+#                     others don't).
+# -----------------------------------------------------------------------------

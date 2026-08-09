@@ -1,0 +1,32 @@
+# =============================================================================
+# VARIABLE TEMPLATE — common-variables.yml
+# =============================================================================
+# A "variables template" is just a YAML file whose top-level key is
+# 'variables:' instead of 'steps:'/'jobs:'/'stages:'. It's included the same
+# way, but from INSIDE a variables block:
+#
+#   variables:
+#     - template: templates/variables/common-variables.yml
+#     - name: extraOne
+#       value: 'foo'
+#
+# Use this for values that are genuinely fixed across every pipeline that
+# includes this file — org-wide conventions, shared tool versions, common
+# paths — so there's exactly one place to bump them.
+# =============================================================================
+
+variables:
+  - name: dotnetVersion
+    value: '8.x'
+  - name: nodeVersion
+    value: '20.x'
+  - name: artifactName
+    value: 'drop'
+  - name: vmImageLinux
+    value: 'ubuntu-latest'
+  - name: vmImageWindows
+    value: 'windows-latest'
+
+  # Templates can also declare a 'group' reference so every consumer
+  # automatically picks up a shared Variable Group without repeating it:
+  # - group: 'org-shared-settings'

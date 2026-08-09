@@ -1,0 +1,135 @@
+# =============================================================================
+# 13 — Resilience Knobs: Timeouts, Retries & continueOnError
+# =============================================================================
+# Everything up to now assumes each step/job either cleanly succeeds or
+# cleanly fails. Real pipelines also need to answer: what happens when a
+# step hangs forever, when a flaky network call fails intermittently, or
+# when one non-critical check shouldn't be allowed to block a whole
+# deployment? These are the knobs for that — all set directly on a
+# job/step, no external configuration required (contrast with approvals in
+# 09, which live in the Environment resource in the UI).
+# =============================================================================
+
+trigger:
+  - main
+
+stages:
+  # ===========================================================================
+  - stage: Build
+    jobs:
+      - job: Build
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        # --- Job-level timeout ------------------------------------------
+        # Kills the ENTIRE job (all remaining steps) if it's still running
+        # after this many minutes. Default is 60 for Microsoft-hosted
+        # agents, 0 (unlimited) for self-hosted — always set this
+        # explicitly for anything self-hosted, or a genuinely hung process
+        # (deadlocked test, stuck package install) ties up the agent
+        # indefinitely.
+        timeoutInMinutes: 30
+
+        # --- Cancellation grace period ------------------------------------
+        # When a job is cancelled (timeout above, or a human clicking
+        # "Cancel"), Azure sends a cancellation signal and gives steps with
+        # condition: always() this many minutes to run before force-killing
+        # the agent process. Use this window for cleanup that must happen
+        # even on a cancelled run (releasing a lock, deleting a temp
+        # resource) — see the cleanup step at the bottom of this job.
+        cancelTimeoutInMinutes: 5
+
+        steps:
+          - script: dotnet restore
+            displayName: 'Restore'
+            # --- Step-level timeout -------------------------------------
+            # Independent of the job's 30-minute budget — this step alone
+            # is killed if it exceeds 10 minutes, so a hung restore doesn't
+            # eat the whole job's time budget before anything else gets a
+            # chance to run.
+            timeoutInMinutes: 10
+
+          - script: |
+              echo "Pushing to an internal package feed that occasionally 429s"
+              curl --fail https://example-feed.internal/publish
+            displayName: 'Publish to internal feed (flaky)'
+            # --- Automatic step retry ------------------------------------
+            # Re-runs THIS step up to 3 additional times if it fails,
+            # before the job is marked failed. Reach for this on steps
+            # whose failure mode is "transient network blip", never on
+            # steps with side effects that aren't idempotent (e.g. "create
+            # a resource" — a retry after a partial failure could create
+            # it twice).
+            retryCountOnTaskFailure: 3
+
+          - script: |
+              echo "Running an optional, non-blocking lint pass"
+              npx some-experimental-linter . || exit 1
+            displayName: 'Experimental linter (non-blocking)'
+            # --- continueOnError (step) ------------------------------------
+            # If this step fails, the STEP shows as "SucceededWithIssues"
+            # in the UI, but the job as a whole is NOT marked failed and
+            # later steps still run. Use this for checks you want visible
+            # but not gating — a new/experimental linter, a non-critical
+            # smoke test — never for anything that leaves the build in a
+            # broken state if skipped.
+            continueOnError: true
+
+          - script: echo "Compiling..."
+            displayName: 'Build'
+
+          # --- Guaranteed cleanup step -------------------------------------
+          # condition: always() means this runs even if an earlier step in
+          # this job failed OR the job was cancelled — paired with
+          # cancelTimeoutInMinutes above, this is what actually gets a
+          # chance to execute during that grace period.
+          - script: echo "Releasing any resources this job acquired..."
+            displayName: 'Cleanup (always runs)'
+            condition: always()
+
+  # ===========================================================================
+  - stage: Deploy
+    displayName: 'Deploy (canary, non-blocking) then stable'
+    dependsOn: Build
+    jobs:
+      - job: DeployCanary
+        pool:
+          vmImage: 'ubuntu-latest'
+        timeoutInMinutes: 15
+        steps:
+          - script: echo "Deploying canary instance..."
+        # --- continueOnError (job) --------------------------------------
+        # If THIS JOB fails, jobs that dependsOn it still run — Azure
+        # treats a continueOnError job as "succeeded, with issues" for the
+        # purpose of gating dependents. Without this, DeployStable below
+        # would be skipped entirely if the canary deploy failed; with it,
+        # a canary failure is visible (job shows a warning icon) but
+        # doesn't block the rest of the rollout. Use deliberately — this
+        # is different from the canary deployment STRATEGY in 09, which
+        # halts on failure by design; this is for a canary step you've
+        # decided is genuinely optional.
+        continueOnError: true
+
+      - job: DeployStable
+        dependsOn: DeployCanary
+        pool:
+          vmImage: 'ubuntu-latest'
+        timeoutInMinutes: 20
+        cancelTimeoutInMinutes: 10 # extra time for a deploy task to roll back cleanly if cancelled mid-flight
+        steps:
+          - script: echo "Deploying to the main fleet..."
+            displayName: 'Deploy'
+          - script: echo "Running post-deploy health checks..."
+            displayName: 'Health check'
+            retryCountOnTaskFailure: 2 # health endpoint may need a few seconds to come up
+
+# -----------------------------------------------------------------------------
+# One more resilience mechanism worth knowing, NOT set in this YAML: an
+# Environment resource (see 09-deployment-environments.yml) can have an
+# "Exclusive Lock" check configured under Environments > <env> > Approvals
+# and checks, in the Azure DevOps UI. It serialises deployments to that
+# environment — a second run targeting the same environment queues instead
+# of racing the first. Like approvals, this lives outside the YAML entirely,
+# so a team editing the pipeline file can't accidentally remove the
+# protection.
+# -----------------------------------------------------------------------------

@@ -1,0 +1,45 @@
+# =============================================================================
+# STEP TEMPLATE — steps-from-list.yml (${{ each }} loop)
+# =============================================================================
+# Beyond ${{ if }}, template expressions support ${{ each x in collection }}
+# to stamp out one YAML node per item in a list/object parameter — this is
+# how you turn "N near-identical steps" into one loop instead of N copies.
+#
+# Consumed with:
+#
+#   steps:
+#     - template: templates/steps/steps-from-list.yml
+#       parameters:
+#         lintCommands:
+#           - name: 'ESLint'
+#             command: 'npx eslint .'
+#           - name: 'Prettier'
+#             command: 'npx prettier --check .'
+#           - name: 'Stylelint'
+#             command: 'npx stylelint "**/*.css"'
+# =============================================================================
+
+parameters:
+  - name: lintCommands
+    type: object
+    default: []
+
+steps:
+  # ${{ each item in parameters.x }} iterates the OBJECT/LIST at compile
+  # time — the expanded pipeline literally contains one 'script' step per
+  # entry, each with its own displayName, fully visible in the Azure DevOps
+  # UI log (rather than one opaque step that loops internally at runtime).
+  - ${{ each lintStep in parameters.lintCommands }}:
+      - script: ${{ lintStep.command }}
+        displayName: 'Lint: ${{ lintStep.name }}'
+
+  # ${{ each }} also works over a plain list of scalars, not just objects —
+  # e.g. running the same script against several target folders:
+  # parameters:
+  #   - name: projectFolders
+  #     type: object
+  #     default: ['src/api', 'src/web', 'src/worker']
+  # steps:
+  #   - ${{ each folder in parameters.projectFolders }}:
+  #       - script: dotnet build ${{ folder }}
+  #         displayName: 'Build ${{ folder }}'
