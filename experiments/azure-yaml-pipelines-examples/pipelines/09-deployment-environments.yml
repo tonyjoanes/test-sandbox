@@ -13,11 +13,32 @@
 #      environment. This is deliberate: approvers shouldn't be editable by
 #      whoever can edit the YAML.
 #
-#   2. 'strategy:' describes HOW the deployment rolls out — runOnce (deploy
-#      once, no rollout choreography), rolling (batch through a VM group),
-#      or canary (rollout to canary machines/traffic split first). Each
-#      strategy exposes deploy/routeTraffic/postRouteTraffic/on:failure
-#      lifecycle hooks.
+#   2. 'strategy:' describes HOW the deployment rolls out. A strategy is
+#      built from named "lifecycle hooks" — deploy / routeTraffic /
+#      postRouteTraffic / on:success / on:failure — and each hook is just a
+#      plain list of steps, exactly like a job's steps. What differs
+#      between strategies is HOW MANY TIMES those hooks run:
+#
+#      runOnce   deploy -> routeTraffic -> postRouteTraffic -> on:success/failure
+#                Every hook runs exactly ONCE. Almost everyone only fills
+#                in 'deploy:' and skips the rest — see DeployDev/
+#                DeployStaging below, which do exactly that.
+#
+#      canary    For EACH percentage in 'increments':
+#                    deploy -> routeTraffic -> postRouteTraffic
+#                ...then, once, after every increment has run:
+#                    on:success (or on:failure the moment one fails)
+#                The deploy/routeTraffic/postRouteTraffic trio REPEATS once
+#                per entry in 'increments' — pass 1 might route 10% of
+#                traffic, pass 2 25%, and so on. Azure does NOT manage that
+#                percentage for you: your own steps read which pass they're
+#                in via the built-in $(strategy.increment) variable and act
+#                on it. See DeployProduction below.
+#
+#      rolling   Batches through a classic Deployment Group (a fixed pool
+#                of VMs registered with Azure DevOps) rather than a
+#                Microsoft-hosted pool — a different targeting model, so
+#                it isn't shown in this file's examples.
 # =============================================================================
 
 trigger:
@@ -48,6 +69,10 @@ stages:
         environment: 'dev'
         strategy:
           runOnce:
+            # 'deploy:' is a lifecycle hook name, not a special keyword you
+            # configure — it just happens to be the only hook most runOnce
+            # deployments need. Steps under it run exactly like normal job
+            # steps, once.
             deploy:
               steps:
                 - script: echo "Deploying build $(Build.BuildId) to Dev"
@@ -86,20 +111,30 @@ stages:
         environment: 'production'
         strategy:
           canary:
-            increments: [10, 25, 50, 100] # percentage of traffic/instances per wave
+            # 4 entries -> the deploy/postRouteTraffic hooks below each run
+            # 4 TIMES total: once as a 10% pass, once as a 25% pass, etc.
+            increments: [10, 25, 50, 100]
             deploy:
               steps:
-                - script: echo "Deploying canary increment"
+                # $(strategy.increment) is set by Azure to whichever number
+                # from 'increments' this pass is currently on — this is
+                # the ONLY thing that tells your steps which wave they're
+                # in. Without reading it, every pass would look identical.
+                - script: echo "Canary pass — routing $(strategy.increment)% of traffic to the new version"
             postRouteTraffic:
               steps:
-                - script: echo "Monitoring health metrics after routing traffic..."
+                - script: echo "Monitoring health metrics at $(strategy.increment)% traffic..."
+            # 'on:' hooks run ONCE TOTAL — after the final (100%) increment
+            # completes successfully, or immediately when ANY increment
+            # fails — not once per increment like deploy/postRouteTraffic
+            # above.
             on:
               failure:
                 steps:
-                  - script: echo "Canary failed — rolling back"
+                  - script: echo "A canary increment failed health checks — rolling back all traffic"
               success:
                 steps:
-                  - script: echo "Canary succeeded — proceeding to next increment"
+                  - script: echo "All increments (10% -> 25% -> 50% -> 100%) succeeded — canary complete"
 
 # -----------------------------------------------------------------------------
 # NOTE on 'environment:' with resource targeting — you can also scope a
