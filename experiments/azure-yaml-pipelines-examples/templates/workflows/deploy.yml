@@ -1,0 +1,32 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — deploy.yml
+# =============================================================================
+# Opt-in workflow: deploy to a single environment via a deployment job (see
+# 09-deployment-environments.yml for what 'environment:' buys you). Unlike
+# templates/stages/deploy-stage.yml (used by 10-full-cicd-pipeline.yml to
+# fan out to three environments with explicit 'dependsOn' chaining), this
+# version deliberately has no 'dependsOn' parameter — see the base
+# pipeline's header comment for why that's the right call for a toggleable
+# menu instead of a fixed promotion chain.
+# =============================================================================
+
+parameters:
+  - name: environmentName
+    type: string
+    default: 'dev'
+
+stages:
+  - stage: Deploy
+    displayName: 'Deploy to ${{ parameters.environmentName }}'
+    jobs:
+      - deployment: Deploy
+        displayName: 'Deploy to ${{ parameters.environmentName }}'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: ${{ parameters.environmentName }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: echo "Deploying build $(Build.BuildId) to ${{ parameters.environmentName }}"
+                  displayName: 'Deploy'

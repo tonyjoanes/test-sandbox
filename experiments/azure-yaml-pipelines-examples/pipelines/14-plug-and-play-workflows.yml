@@ -1,0 +1,126 @@
+# =============================================================================
+# 14 — Plug-and-Play Base Pipeline (opt-in workflow menu)
+# =============================================================================
+# A different reuse pattern from 12's 'extends:' example. There, a base
+# template makes stages MANDATORY — consumers can't remove them. Here, THIS
+# file is the pipeline a human actually runs, and its parameters are a menu:
+# flip a boolean, get a stage; leave it off, get nothing. Because these are
+# plain top-level pipeline parameters (not hidden inside an 'extends:'
+# consumer or an object), Azure DevOps renders them as real controls —
+# checkboxes and a dropdown — in the "Run pipeline" dialog. That's the
+# actual "plug and play" part: no YAML editing required to turn a workflow
+# on or off for one run.
+#
+# (That's also why the toggles below are five flat booleans rather than one
+# 'workflows: { lint: true, ... }' object parameter — object-typed
+# parameters aren't exposed as UI controls in the Run dialog, only
+# string/boolean/number are. Grouping them would read a little tidier in
+# the YAML but would quietly turn this from a self-service menu back into
+# something only editable by hand.)
+#
+# Two independent selection mechanisms, combined:
+#
+#   1. ON/OFF — each 'run*' boolean wraps its stage's '- template:' entry in
+#      '${{ if }}'. A false value doesn't just skip the stage, it makes the
+#      stage NOT EXIST in the compiled pipeline — same mechanism used for
+#      conditional steps throughout this suite, just applied at the
+#      coarsest (stage) level.
+#
+#   2. WHICH VARIANT — 'stack' is spliced directly into a template PATH:
+#      '../templates/workflows/build-test-${{ parameters.stack }}.yml'.
+#      Changing 'node' to 'dotnet' swaps in an entirely different file, not
+#      just different parameter values.
+#
+# Notice none of templates/workflows/*.yml set 'dependsOn'. That's
+# deliberate: Azure DevOps's default (no 'dependsOn' key at all) is "depend
+# on whichever stage immediately precedes this one in the COMPILED list" —
+# not the source list. So if 'runLint' is false, 'BuildTest' automatically
+# becomes first instead of failing to compile over a dangling reference to
+# a 'Lint' stage that no longer exists. Every combination of toggles below
+# just works, with zero dependsOn bookkeeping. The tradeoff: everything
+# runs strictly sequentially, one stage at a time. If you need some of the
+# plugged-in workflows to fan out and run in parallel (e.g. DockerBuildPush
+# and SecurityScan both starting as soon as BuildTest finishes), give the
+# relevant templates a 'dependsOn' parameter and wire it explicitly, the
+# way templates/stages/deploy-stage.yml and 10-full-cicd-pipeline.yml do.
+# =============================================================================
+
+trigger:
+  - main
+
+parameters:
+  - name: stack
+    displayName: 'Application stack'
+    type: string
+    default: node
+    values:
+      - node
+      - dotnet
+      - python
+
+  - name: runLint
+    displayName: 'Run lint workflow'
+    type: boolean
+    default: true
+
+  - name: runBuildTest
+    displayName: 'Run build & test workflow'
+    type: boolean
+    default: true
+
+  - name: runDockerBuild
+    displayName: 'Run Docker build & push workflow'
+    type: boolean
+    default: false
+
+  - name: runSecurityScan
+    displayName: 'Run security scan workflow'
+    type: boolean
+    default: false
+
+  - name: runDeploy
+    displayName: 'Run deploy workflow'
+    type: boolean
+    default: false
+
+  - name: environmentName
+    displayName: 'Deploy target (only used if runDeploy is true)'
+    type: string
+    default: dev
+    values:
+      - dev
+      - staging
+      - production
+
+stages:
+  - ${{ if eq(parameters.runLint, true) }}:
+      - template: ../templates/workflows/lint.yml
+
+  - ${{ if eq(parameters.runBuildTest, true) }}:
+      - template: ../templates/workflows/build-test-${{ parameters.stack }}.yml
+
+  - ${{ if eq(parameters.runDockerBuild, true) }}:
+      - template: ../templates/workflows/docker-build-push.yml
+        parameters:
+          imageName: 'my-app'
+
+  - ${{ if eq(parameters.runSecurityScan, true) }}:
+      - template: ../templates/workflows/security-scan.yml
+
+  - ${{ if eq(parameters.runDeploy, true) }}:
+      - template: ../templates/workflows/deploy.yml
+        parameters:
+          environmentName: ${{ parameters.environmentName }}
+
+# -----------------------------------------------------------------------------
+# Three example "runs" of this same file, just by changing parameter values
+# (via the Run dialog, or 'az pipelines run --parameters'):
+#
+#   Fast PR check:     stack=node,   runLint=true,  runBuildTest=true,  everything else false
+#   Nightly hardening: stack=node,   runLint=true,  runBuildTest=true,  runDockerBuild=true, runSecurityScan=true
+#   Release to prod:   stack=dotnet, runBuildTest=true, runDockerBuild=true, runDeploy=true, environmentName=production
+#
+# Same file, same templates folder, zero duplication — that's the payoff of
+# a plug-and-play base pipeline over hand-copying azure-pipelines.yml per
+# use case.
+# -----------------------------------------------------------------------------
