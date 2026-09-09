@@ -4,11 +4,16 @@ A reference set of Bicep files showing how to open up module authoring to multip
 without losing control of what gets deployed: a **contract** (what a squad must set, what it
 may extend, and what it cannot touch) enforced by the Bicep type system itself, composed on
 top of **Azure Verified Modules (AVM)** for the actual resource definitions, backed by a
-**two-tier ownership model** and a CI gate.
+**three-tier ownership model** and a CI gate.
 
 > Like `azure-yaml-pipelines-examples`, this is reference material, not an executable demo —
 > the sandbox this repo runs in has no `bicep`/`az` CLI and no Azure subscription. See
 > [Using These Files](#using-these-files) to try it against a real subscription.
+
+> **Rolling this out with multiple teams?** See [`ADOPTION.md`](ADOPTION.md) for registry/
+> versioning, opening a `contributed/` tier so squads can add to the shared catalog themselves,
+> an RFC process, and a rollout sequence. [`examples/extending-a-module.md`](examples/extending-a-module.md)
+> is written to hand directly to a squad asking "how do I get the shared module to do X."
 
 ---
 
@@ -117,10 +122,10 @@ Microsoft/AVM │  avm/res/storage/storage-    │  ← the actual `Microsoft.St
               └─────────────────────────────┘
 ```
 
-Never let a `workload/` module call an AVM module directly for a resource type that has a
-foundation module — that's the one rule which, if broken, defeats everything else here. There
-is no way to structurally prevent it in Bicep alone; it's enforced by `ci/ps-rule/ps-rule.yaml`
-and code review, not by the compiler.
+Never let a `workload/` module call an AVM module directly for a resource type that already
+has a `foundation/` or `contributed/` module — that's the one rule which, if broken, defeats
+everything else here. There is no way to structurally prevent it in Bicep alone; it's enforced
+by `ci/ps-rule/ps-rule.yaml` and code review, not by the compiler.
 
 ---
 
@@ -134,7 +139,7 @@ different from one who deployed a policy-denied resource on a live subscription 
 |---|---|---|---|
 | 1 | **Bicep type system** | Missing required inputs, out-of-allow-list values, extra keys on sealed types — all at `bicep build`, on the squad's own machine, before a PR even opens | `shared/types.bicep`, `foundation/*/main.bicep` |
 | 2 | **Linter (`bicepconfig.json`)** | Style/hygiene issues the type system doesn't express: unused params, hardcoded URLs, secrets in outputs | `bicepconfig.json` |
-| 3 | **CODEOWNERS + required review** | "Did a human from the platform team actually look at this contract change?" — required only on `shared/` and `foundation/`, not `workload/` | `governance/CODEOWNERS.example` |
+| 3 | **CODEOWNERS + required review** | "Did the right humans look at this change?" — platform for `shared/`/`foundation/`, a lighter review pool for `contributed/`, normal team review for `workload/` | `governance/CODEOWNERS.example` |
 | 4 | **CI: build + lint + PSRule + what-if** | Anything layers 1–3 miss, plus a preview of the actual resource diff before it merges | `ci/azure-pipelines.yml`, `ci/ps-rule/ps-rule.yaml` |
 | 5 | **Azure Policy (deny/audit)** | The absolute last line of defense — catches drift, out-of-band changes (portal, CLI, another tool entirely) that never went through this pipeline at all | *(not modelled here — lives in your Azure environment, not this repo)* |
 
@@ -145,21 +150,26 @@ as intended.
 
 ---
 
-## Two-Tier Ownership
+## Three-Tier Ownership
 
-| | `foundation/` | `workload/` |
-|---|---|---|
-| Owned by | Platform team | Individual squads |
-| Wraps | AVM directly, pinned version | A foundation module (never AVM directly) |
-| Parameter surface | Deliberately narrow — only what the org wants squads deciding | As wide as the squad needs for its own resources |
-| Review gate | CODEOWNERS-mandated platform review | Normal squad review |
-| Can loosen the contract? | Yes — that's the point; changes here are reviewed precisely because they can | No — structurally can't without a foundation-module change first |
+| | `foundation/` | `contributed/` | `workload/` |
+|---|---|---|---|
+| Owned by | Platform team | The squad that contributed it | Individual squads, privately |
+| Lives in the shared registry? | Yes | Yes | No |
+| Wraps | AVM directly, pinned version | AVM directly, pinned version | A foundation/contributed module (never AVM directly for a resource type the catalog already covers) |
+| Parameter surface | Narrow — only what the org wants squads deciding | Same required/optional/sealed shape, scoped to what the contributing squad needed | As wide as the squad needs for its own resources |
+| Review gate | CODEOWNERS-mandated platform review | Rotating platform+squad review pool | Normal squad review |
+| RFC required first? | Yes | Yes | No |
+| Can loosen the org-wide contract (`shared/types.bicep`)? | Yes, via its own reviewed PR — the point of platform ownership | No — declares closed types locally instead | No |
 
-This is the actual answer to "how do we control this when squads are writing the modules":
-squads get genuine authoring freedom in `workload/`, but every `workload/` module is built
-*out of* `foundation/` building blocks whose contract they cannot loosen from the outside. The
-platform team's job shrinks to maintaining a small number of well-typed foundation modules
-instead of reviewing every squad PR.
+This is the actual answer to "how do we control this when squads are writing the modules, and
+how do squads contribute to the shared catalog rather than just consume it": `foundation/`
+holds the org-wide contract and stays platform-reviewed; `contributed/` gives squads a real,
+lighter-weight path to add a module the whole org can reuse, while keeping ownership (and
+review) with the squad that actually needs it; `workload/` stays fully private per-squad
+composition on top of both. See [`ADOPTION.md`](ADOPTION.md) for how to sequence opening the
+`contributed/` tier, and [`contributed/service-bus-namespace/main.bicep`](contributed/service-bus-namespace/main.bicep)
+for a full worked example.
 
 ---
 
@@ -169,12 +179,17 @@ instead of reviewing every squad PR.
 |---|---|
 | [`shared/types.bicep`](shared/types.bicep) | Exported contract vocabulary: `mandatoryTags` (sealed), `networkPosture` (unsealed), `approvedStorageSku` (allow-list) |
 | [`foundation/storage-account/main.bicep`](foundation/storage-account/main.bicep) | Platform-owned module: wraps AVM, narrows the surface, defines the sealed `advancedOverrides` escape hatch |
+| [`contributed/service-bus-namespace/main.bicep`](contributed/service-bus-namespace/main.bicep) | Squad-contributed module: same required/optional/sealed shape, owned and versioned by the contributing squad rather than platform |
 | [`workload/team-blob-store/main.bicep`](workload/team-blob-store/main.bicep) | Squad-owned module: composes the foundation module, adds squad-only container resources |
 | [`bicepconfig.json`](bicepconfig.json) | Registry aliases (public AVM + private platform registry) and linter rule levels |
 | [`ci/azure-pipelines.yml`](ci/azure-pipelines.yml) | Mandatory gate: build, lint, PSRule, `what-if` — modelled on the `extends:` pattern in `azure-yaml-pipelines-examples/pipelines/12-extends-and-loops.yml` |
 | [`ci/ps-rule/ps-rule.yaml`](ci/ps-rule/ps-rule.yaml) | Policy-as-code baseline (layer 4) |
-| [`governance/CODEOWNERS.example`](governance/CODEOWNERS.example) | Which paths require platform sign-off vs normal squad review |
+| [`governance/CODEOWNERS.example`](governance/CODEOWNERS.example) | Which paths require platform sign-off, the review pool, or normal squad review |
 | [`governance/module-contract-checklist.md`](governance/module-contract-checklist.md) | PR checklist for anyone changing `foundation/` or `shared/` |
+| [`governance/contributed-module-checklist.md`](governance/contributed-module-checklist.md) | Lighter PR checklist for `contributed/` modules |
+| [`governance/rfc-template.md`](governance/rfc-template.md) | One-page contract sketch filed before writing a new shared module |
+| [`examples/extending-a-module.md`](examples/extending-a-module.md) | Five worked extension scenarios, ranked by how much review weight each needs |
+| [`ADOPTION.md`](ADOPTION.md) | Rollout plan for taking this pattern from one team to many |
 
 ---
 
@@ -188,8 +203,13 @@ instead of reviewing every squad PR.
    around it without touching it.
 4. **`bicepconfig.json`** then **`ci/azure-pipelines.yml`** then **`ci/ps-rule/ps-rule.yaml`**
    — the layers that catch what the type system in steps 1–3 can't.
-5. **`governance/CODEOWNERS.example`** and **`governance/module-contract-checklist.md`** — the
-   human-process layer wrapping all of the above.
+5. **`governance/CODEOWNERS.example`**, **`governance/module-contract-checklist.md`**,
+   **`governance/rfc-template.md`** — the human-process layer wrapping all of the above.
+6. **`contributed/service-bus-namespace/main.bicep`** and
+   **`governance/contributed-module-checklist.md`** — how a squad adds to the shared catalog
+   itself, not just consumes it.
+7. **`examples/extending-a-module.md`** then **`ADOPTION.md`** — how to actually roll this out
+   once more than one or two teams are involved.
 
 ---
 
@@ -212,9 +232,10 @@ instead of reviewing every squad PR.
   Terraform) modules for individual resources (`avm/res/...`) and multi-resource patterns
   (`avm/ptn/...`), published to the public Bicep registry (`br/public:...`) and kept current
   with resource-provider API versions.
-- **Foundation vs workload module** — the two-tier ownership split used in this repo:
-  foundation modules (platform-owned, wrap AVM, narrow the contract) vs workload modules
-  (squad-owned, compose foundation modules, add squad-specific resources).
+- **Foundation vs contributed vs workload module** — the three-tier ownership split used in
+  this repo: foundation modules (platform-owned, wrap AVM, narrow the contract), contributed
+  modules (squad-owned, same contract shape, lighter review, live in the shared registry), and
+  workload modules (squad-owned, private, compose foundation/contributed modules).
 - **Private module registry (ACR)** — an Azure Container Registry used as a Bicep module
   registry (`br/platform:...` in `bicepconfig.json`) for publishing versioned, organisation-
   internal modules, as distinct from the public AVM registry.
@@ -224,6 +245,14 @@ instead of reviewing every squad PR.
 - **`what-if`** — `az deployment group what-if` previews the actual resource-level diff a
   deployment would make, without deploying. Run in CI as the last check before merge so a
   reviewer (and the pipeline) sees intent, not just "it compiled."
+- **Contributed module** — a shared, registry-published module authored and owned by a squad
+  rather than the platform team, subject to a lighter review bar than `foundation/` but the
+  same required/optional/sealed contract shape. See [Three-Tier Ownership](#three-tier-ownership).
+- **RFC (for this repo)** — a one-page contract sketch (`governance/rfc-template.md`) filed
+  before writing a new shared module, so disagreements about required/optional/sealed shape
+  surface while it's a sentence to change, not a finished PR.
+- **Promotion** — moving a heavily-used `contributed/` module into `foundation/`, transferring
+  ownership (and usually tightening its allow-lists) once several unrelated squads depend on it.
 
 ---
 
@@ -234,8 +263,9 @@ These are reference examples, not wired into a live Azure subscription from this
 
 1. Install the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) with the
    Bicep extension (`az bicep install`), or the standalone `bicep` CLI.
-2. From this folder, validate compilation: `az bicep build --file foundation/storage-account/main.bicep`
-   and `az bicep build --file workload/team-blob-store/main.bicep`.
+2. From this folder, validate compilation: `az bicep build --file foundation/storage-account/main.bicep`,
+   `az bicep build --file contributed/service-bus-namespace/main.bicep`, and
+   `az bicep build --file workload/team-blob-store/main.bicep`.
 3. To see the contract actually reject something, try changing `sku: 'Standard_ZRS'` in
    `workload/team-blob-store/main.bicep` to `sku: 'Premium_LRS'` and re-run `bicep build` — it
    fails at compile time because `Premium_LRS` isn't in `approvedStorageSku`'s allow-list.

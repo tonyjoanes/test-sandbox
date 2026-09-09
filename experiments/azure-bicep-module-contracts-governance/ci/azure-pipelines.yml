@@ -35,13 +35,13 @@ stages:
               # a broken contract reference, a sealed-type violation, or a SKU outside the
               # approved allow-list — exactly the classes of error this setup is meant to catch
               # before a human reviewer has to.
-              find foundation workload -name main.bicep -print0 \
+              find foundation contributed workload -name main.bicep -print0 \
                 | xargs -0 -n1 az bicep build --file
             displayName: 'az bicep build (fails on type/contract violations)'
 
           - script: |
               set -euo pipefail
-              find foundation workload -name main.bicep -print0 \
+              find foundation contributed workload -name main.bicep -print0 \
                 | xargs -0 -n1 az bicep lint --file
             displayName: 'az bicep lint (bicepconfig.json rules)'
 

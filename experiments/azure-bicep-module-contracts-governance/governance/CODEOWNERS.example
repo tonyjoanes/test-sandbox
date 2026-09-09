@@ -13,10 +13,19 @@
 # Platform-owned modules — these wrap AVM and decide what squads are allowed to set.
 /foundation/                      @contoso/platform-engineering
 
+# Squad-contributed shared modules. Lighter than /foundation/ — reviewed by a rotating
+# platform+squad pool, not the full platform team. governance/rfc-template.md requires an
+# RFC to exist before this PR is opened; governance/contributed-module-checklist.md is the
+# review bar. Give a specific module its own line below once it has a clear owning team,
+# so changes route to that team directly instead of the generic pool.
+/contributed/                     @contoso/module-reviewers
+# /contributed/service-bus-namespace/  @contoso/messaging-squad
+
 # Pipeline gates and policy-as-code config — changing what's *checked* is as sensitive as
 # changing what's *allowed*.
 /bicepconfig.json                 @contoso/platform-engineering
 /ci/                               @contoso/platform-engineering
+/governance/                       @contoso/platform-engineering
 
-# Squad-authored composition — normal team review, no platform gate required.
+# Squad-authored composition, private to one team — normal team review, no platform gate.
 /workload/                        @contoso/squad-leads
