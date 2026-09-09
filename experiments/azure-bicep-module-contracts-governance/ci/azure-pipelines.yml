@@ -1,0 +1,85 @@
+# Reference CI gate for a Bicep module registry repo. Mirrors the pattern shown in
+# ../../azure-yaml-pipelines-examples/pipelines/12-extends-and-loops.yml: an `extends`
+# template makes these checks mandatory for every module PR, not merely available.
+#
+# The gate has one job: nothing merges into `foundation/` or `shared/` unless it (a) compiles,
+# (b) passes policy-as-code checks, and (c) has been reviewed by the platform team via
+# CODEOWNERS. Squad-owned `workload/` modules still get (a) and (b) — compile-time and
+# policy-time control applies everywhere — but not the mandatory platform review, since nothing
+# they contain can violate the contract without (a) or (b) already catching it.
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - name: bicepConfigPath
+    value: '$(Build.SourcesDirectory)/bicepconfig.json'
+
+stages:
+  - stage: Validate
+    jobs:
+      - job: LintAndBuild
+        displayName: 'bicep lint + build (every changed module)'
+        steps:
+          - script: |
+              set -euo pipefail
+              # Compile every main.bicep under foundation/ and workload/. A failed build means
+              # a broken contract reference, a sealed-type violation, or a SKU outside the
+              # approved allow-list — exactly the classes of error this setup is meant to catch
+              # before a human reviewer has to.
+              find foundation workload -name main.bicep -print0 \
+                | xargs -0 -n1 az bicep build --file
+            displayName: 'az bicep build (fails on type/contract violations)'
+
+          - script: |
+              set -euo pipefail
+              find foundation workload -name main.bicep -print0 \
+                | xargs -0 -n1 az bicep lint --file
+            displayName: 'az bicep lint (bicepconfig.json rules)'
+
+      - job: PolicyAsCode
+        displayName: 'PSRule for Azure — belt-and-braces after compile-time checks'
+        steps:
+          - task: ps-rule-assert@2
+            displayName: 'Run PSRule for Azure baseline'
+            inputs:
+              modules: 'PSRule.Rules.Azure'
+              inputPath: '**/*.bicep'
+              option: 'ci/ps-rule/ps-rule.yaml'
+            # PSRule catches what the type system structurally can't: e.g. "TLS version is
+            # syntactically valid but this resource type also needs HTTPS-only enforced",
+            # or org rules that span multiple resources in one deployment.
+
+  - stage: WhatIf
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - deployment: WhatIfPreview
+        displayName: 'what-if against a sandbox subscription'
+        environment: bicep-validation
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - script: |
+                    set -euo pipefail
+                    az deployment group what-if \
+                      --resource-group rg-bicep-validation \
+                      --template-file workload/team-blob-store/main.bicep \
+                      --parameters name=samplevalidation location=uksouth \
+                        tags='{"costCentre":"CC-0001","owner":"platform-team","environment":"dev","dataClassification":"internal"}' \
+                        network='{"publicNetworkAccess":"Disabled"}'
+                  displayName: 'what-if: does the plan match intent, not just "does it compile"'
+
+# Merge protection for foundation/ and shared/ is enforced by branch policy + CODEOWNERS
+# (see ../governance/CODEOWNERS.example), not by anything in this pipeline — a required
+# reviewer group is a repo setting, and repeating it here would just be a second place to
+# get out of sync with the real rule.

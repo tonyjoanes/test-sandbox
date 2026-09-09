@@ -1,0 +1,22 @@
+# Reference CODEOWNERS for a Bicep module registry repo. Rename to `CODEOWNERS` and place at
+# the repo root (or `.github/CODEOWNERS`) to activate it — GitHub/Azure DevOps then requires
+# a review from the matched group before a PR touching that path can merge.
+#
+# The split below is the actual governance decision this whole experiment is about: the
+# contract surface (shared/, foundation/) requires platform sign-off; everything built on top
+# of it (workload/) does not, because it structurally cannot violate the contract without
+# `bicep build` or PSRule already failing the PR first.
+
+# Contract vocabulary — changing a shared type changes every module that imports it.
+/shared/                          @contoso/platform-engineering
+
+# Platform-owned modules — these wrap AVM and decide what squads are allowed to set.
+/foundation/                      @contoso/platform-engineering
+
+# Pipeline gates and policy-as-code config — changing what's *checked* is as sensitive as
+# changing what's *allowed*.
+/bicepconfig.json                 @contoso/platform-engineering
+/ci/                               @contoso/platform-engineering
+
+# Squad-authored composition — normal team review, no platform gate required.
+/workload/                        @contoso/squad-leads

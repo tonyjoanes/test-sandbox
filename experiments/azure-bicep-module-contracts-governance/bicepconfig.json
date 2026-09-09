@@ -1,0 +1,40 @@
+{
+  "//": "Reference bicepconfig.json for this experiment. In a real repo this lives at the root of the module registry repo, so every squad module under it inherits the same linter/registry rules with no per-module opt-in.",
+
+  "moduleAliases": {
+    "br": {
+      "public": {
+        "registry": "mcr.microsoft.com",
+        "modulePath": "bicep"
+      },
+      "platform": {
+        "//": "Private ACR holding platform-published, versioned modules. Squad modules reference foundation modules as 'br/platform:storage-account:1.4.0' instead of a relative path once this repo is split from the squad repos.",
+        "registry": "contoso.azurecr.io",
+        "modulePath": "modules"
+      }
+    }
+  },
+
+  "analyzers": {
+    "core": {
+      "verbose": false,
+      "enabled": true,
+      "rules": {
+        "//": "A representative subset — see https://aka.ms/bicep/linter for the full rule set.",
+        "no-hardcoded-env-urls": { "level": "error" },
+        "no-unused-params": { "level": "error" },
+        "no-unused-vars": { "level": "error" },
+        "secure-parameter-default": { "level": "error" },
+        "outputs-should-not-contain-secrets": { "level": "error" },
+        "use-recent-api-versions": { "level": "warning" },
+        "explicit-values-for-loc-params": { "level": "warning" },
+        "max-outputs": { "level": "warning" },
+        "max-params": { "level": "warning" }
+      }
+    }
+  },
+
+  "cloud": {
+    "currentProfile": "AzureCloud"
+  }
+}

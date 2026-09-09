@@ -1,0 +1,26 @@
+# Reference PSRule for Azure configuration. PSRule runs AFTER `bicep build` succeeds and
+# checks things a type system can't express structurally — cross-resource rules, naming
+# convention regexes, "this SKU is technically valid but banned in production", etc.
+# It's a second, independent layer: a squad who finds a way around the Bicep type contract
+# (e.g. by not going through the foundation module at all) still has to clear this.
+
+input:
+  pathIgnore:
+    - 'ci/**'
+    - 'governance/**'
+
+configuration:
+  AZURE_RESOURCE_ALLOWED_LOCATIONS:
+    - uksouth
+    - ukwest
+
+  AZURE_STORAGE_MIN_TLS_VERSION: 'TLS1_2'
+
+rule:
+  # Deny listed built-in rules the org has decided are out of scope for this module set,
+  # rather than silently allowing them to fail with no owner.
+  excluded:
+    - Azure.Storage.SoftDelete # tracked separately as a backup-policy concern, not a module concern
+
+binding:
+  preferredTargetType: dominant
