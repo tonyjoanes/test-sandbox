@@ -1,0 +1,24 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — build-test-python.yml
+# =============================================================================
+# Same 'BuildTest' slot as build-test-node.yml / build-test-dotnet.yml —
+# selected instead of them when the base pipeline's 'stack' parameter is
+# 'python'. See build-test-node.yml for the shared-name rationale.
+# =============================================================================
+
+stages:
+  - stage: BuildTest
+    displayName: 'Build & Test (Python)'
+    jobs:
+      - job: BuildTest
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.12'
+            displayName: 'Use Python 3.12'
+          - script: pip install -r requirements.txt -r requirements-dev.txt
+            displayName: 'Install dependencies'
+          - script: pytest --junitxml=test-results.xml
+            displayName: 'pytest'

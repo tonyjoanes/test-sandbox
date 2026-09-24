@@ -1,0 +1,22 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — build-test-dotnet.yml
+# =============================================================================
+# Same 'BuildTest' slot as build-test-node.yml / build-test-python.yml —
+# selected instead of them when the base pipeline's 'stack' parameter is
+# 'dotnet'. See build-test-node.yml for the shared-name rationale.
+# =============================================================================
+
+stages:
+  - stage: BuildTest
+    displayName: 'Build & Test (.NET)'
+    jobs:
+      - job: BuildTest
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: dotnet restore
+            displayName: 'dotnet restore'
+          - script: dotnet build --configuration Release
+            displayName: 'dotnet build'
+          - script: dotnet test --configuration Release
+            displayName: 'dotnet test'

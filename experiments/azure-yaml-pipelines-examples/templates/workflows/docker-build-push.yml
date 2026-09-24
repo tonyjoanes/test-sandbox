@@ -1,0 +1,26 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — docker-build-push.yml
+# =============================================================================
+# Opt-in workflow: build a container image and push it to a registry. Takes
+# one small, optional parameter (unlike build-test-*.yml, which take none)
+# — that's fine; "no REQUIRED parameters" is the actual contract, not "no
+# parameters at all".
+# =============================================================================
+
+parameters:
+  - name: imageName
+    type: string
+    default: 'app'
+
+stages:
+  - stage: DockerBuildPush
+    displayName: 'Docker Build & Push'
+    jobs:
+      - job: DockerBuildPush
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: docker build -t ${{ parameters.imageName }}:$(Build.BuildId) .
+            displayName: 'docker build'
+          - script: echo "docker push ${{ parameters.imageName }}:$(Build.BuildId) (registry login omitted — see a real ACR/Docker@2 task for that)"
+            displayName: 'docker push'
