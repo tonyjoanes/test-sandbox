@@ -1,0 +1,23 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — security-scan.yml
+# =============================================================================
+# Opt-in workflow: dependency + secret scanning. Contrast this with
+# templates/extends/base-pipeline.yml, where an equivalent scan is
+# MANDATORY and consumers can't turn it off. Here it's just another item on
+# the menu — appropriate for, say, an internal tool repo where the org
+# doesn't (yet) require it, versus a customer-facing service where it
+# should be enforced via 'extends:' instead. Same underlying step, two very
+# different reuse patterns depending on whether "optional" or "mandatory"
+# is the intent.
+# =============================================================================
+
+stages:
+  - stage: SecurityScan
+    displayName: 'Security Scan'
+    jobs:
+      - job: SecurityScan
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Running dependency + secret scan (e.g. a SCA tool or Microsoft Security DevOps extension)"
+            displayName: 'Security scan'

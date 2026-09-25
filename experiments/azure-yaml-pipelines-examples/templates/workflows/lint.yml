@@ -1,0 +1,27 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — lint.yml
+# =============================================================================
+# One of several opt-in "workflow" stage templates that pipelines/14-plug-
+# and-play-workflows.yml can pull in. Every template in this folder follows
+# the same contract so they can be freely mixed and matched:
+#
+#   - it defines exactly ONE stage
+#   - it takes no required parameters (safe defaults only)
+#   - it does NOT set 'dependsOn' — see the base pipeline for why that's
+#     deliberate rather than an oversight.
+#
+# That shared shape is what makes them "plug and play": the base pipeline
+# doesn't need to know anything about a workflow's internals to include it,
+# and including/excluding one never breaks another.
+# =============================================================================
+
+stages:
+  - stage: Lint
+    displayName: 'Lint'
+    jobs:
+      - job: Lint
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: echo "Running linters (eslint/flake8/dotnet-format, depending on stack)"
+            displayName: 'Lint'

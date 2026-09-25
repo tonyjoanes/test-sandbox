@@ -1,0 +1,29 @@
+# =============================================================================
+# WORKFLOW TEMPLATE — build-test-node.yml
+# =============================================================================
+# One of three interchangeable "BuildTest" workflows (see also
+# build-test-dotnet.yml, build-test-python.yml). All three define a stage
+# with the SAME name — 'BuildTest' — so exactly one is ever selected, chosen
+# by the base pipeline's 'stack' parameter, and downstream stages don't need
+# to know or care which one it was. This is the second plug-and-play axis:
+# not just on/off, but "pick which variant fills this slot."
+# =============================================================================
+
+stages:
+  - stage: BuildTest
+    displayName: 'Build & Test (Node.js)'
+    jobs:
+      - job: BuildTest
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+            displayName: 'Use Node.js 20.x'
+          - script: npm ci
+            displayName: 'npm ci'
+          - script: npm run build
+            displayName: 'npm run build'
+          - script: npm test -- --ci
+            displayName: 'npm test'

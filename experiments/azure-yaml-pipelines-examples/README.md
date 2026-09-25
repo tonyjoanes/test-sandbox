@@ -60,6 +60,7 @@ Every example below calls out which syntax it's using and why.
 | 11 | [`pipelines/11-variable-templates.yml`](pipelines/11-variable-templates.yml) | Variable templates — fixed shared values, and a parameterised template that branches per environment |
 | 12 | [`pipelines/12-extends-and-loops.yml`](pipelines/12-extends-and-loops.yml) | `${{ each }}` loops for dynamic step/job generation, plus `extends:` governance templates |
 | 13 | [`pipelines/13-resilience-and-timeouts.yml`](pipelines/13-resilience-and-timeouts.yml) | `timeoutInMinutes`, `cancelTimeoutInMinutes`, `continueOnError` (step & job), `retryCountOnTaskFailure`, guaranteed cleanup steps |
+| 14 | [`pipelines/14-plug-and-play-workflows.yml`](pipelines/14-plug-and-play-workflows.yml) | A self-service "menu" base pipeline — boolean parameters toggle whole workflow stages on/off, a `stack` parameter swaps which template file fills a slot, all exposed as real controls in the Run-pipeline UI |
 
 ### Reusable Templates
 
@@ -89,6 +90,30 @@ makes parts of a pipeline **mandatory** rather than merely reusable. File
 `10` combines step/job/stage templates; `11` and `12` cover variable
 templates, `${{ each }}`, and `extends` respectively.
 
+### Plug-and-Play Workflow Templates
+
+A fourth flavour, distinct from "reusable" and "mandatory": **opt-in**.
+`templates/workflows/` holds a set of independent, single-stage templates
+that all share the same shape (one stage, no required parameters, no
+`dependsOn`), so any subset of them can be toggled on for a given run
+without touching YAML — see file `14`, which turns each one into a
+checkbox (or, for `stack`, a dropdown) in the Run-pipeline UI.
+
+| File | Slot | Purpose |
+|---|---|---|
+| [`templates/workflows/lint.yml`](templates/workflows/lint.yml) | `Lint` | Static analysis / formatting checks |
+| [`templates/workflows/build-test-node.yml`](templates/workflows/build-test-node.yml) | `BuildTest` | Node.js build + test — one of three interchangeable fills for the same slot |
+| [`templates/workflows/build-test-dotnet.yml`](templates/workflows/build-test-dotnet.yml) | `BuildTest` | .NET build + test — selected instead of the above when `stack: dotnet` |
+| [`templates/workflows/build-test-python.yml`](templates/workflows/build-test-python.yml) | `BuildTest` | Python build + test — selected instead of the above when `stack: python` |
+| [`templates/workflows/docker-build-push.yml`](templates/workflows/docker-build-push.yml) | `DockerBuildPush` | Build and push a container image |
+| [`templates/workflows/security-scan.yml`](templates/workflows/security-scan.yml) | `SecurityScan` | Dependency + secret scan — optional here, contrast with the *mandatory* scan in `templates/extends/base-pipeline.yml` |
+| [`templates/workflows/deploy.yml`](templates/workflows/deploy.yml) | `Deploy` | Deploy to one environment via a deployment job |
+
+The three `build-test-*.yml` files demonstrate the second plug-and-play
+axis: file `14` doesn't pick between them with `${{ if }}`, it builds the
+template *path* from a parameter (`build-test-${{ parameters.stack }}.yml`)
+— swapping which file fills a slot, not just whether the slot is filled.
+
 ---
 
 ## Reading Order
@@ -100,6 +125,7 @@ templates, `${{ each }}`, and `extends` respectively.
 5. **`templates/variables`, then 11**: centralising and environment-branching variables via templates.
 6. **`templates/*/…-from-list.yml`, `templates/extends`, then 12**: the two advanced patterns — generating steps/jobs from a list with `${{ each }}`, and locking down pipeline structure org-wide with `extends`.
 7. **13**: resilience knobs — timeouts, retries, and `continueOnError` — for when a step hangs, flakes, or shouldn't be allowed to block the rest of the run.
+8. **`templates/workflows`, then 14**: the opt-in counterpart to `extends` — a self-service menu pipeline where a human (or a caller passing `--parameters`) picks which workflows run and which variant fills a slot, entirely via parameters.
 
 ---
 
@@ -113,6 +139,7 @@ templates, `${{ each }}`, and `extends` respectively.
 - **Template** (`template:`) — a separate YAML file *inserted* into whatever the including file already defines, parameterised with `parameters:`. Comes in step, job, stage, and variables flavours (see table above) depending on what level of the hierarchy it targets.
 - **`${{ each x in parameters.list }}`** — a compile-time loop inside a template that stamps out one copy of a YAML node (a step, a job) per item in a list/object parameter. Use it instead of `strategy.matrix` when the generated units aren't identical (different steps, different pools) rather than just different variable values.
 - **`extends:`** — the inverse of `template:`. A pipeline that uses `extends:` hands its *entire* structure to the named template and may only supply parameter values — it has no `stages:`/`jobs:`/`steps:` key of its own. This is how platform/security teams make stages (a security scan, an approved deploy path) mandatory across every pipeline in an org, rather than merely reusable. Parameter `values:` restriction (an allow-list on a parameter's valid inputs, checked at compile time) is often layered on top for the same reason.
+- **Plug-and-play / opt-in menu pipeline** (see `14` and `templates/workflows/`) — the opposite intent from `extends:`. Instead of a template forcing stages onto every consumer, the pipeline itself exposes one boolean parameter per optional workflow (plus a `stack`-style parameter for "which variant"), and `${{ if }}` around each `- template:` entry means a `false` value removes that stage from the compiled pipeline entirely — not just skips it. Because these are plain top-level string/boolean parameters (not nested in an object), Azure DevOps renders them as real controls in the Run-pipeline UI, so the "selection" genuinely needs no YAML edit. Reach for `extends:` when something must never be skippable; reach for this pattern when it should be someone's choice per run.
 - **Artifact vs Cache** — an artifact is pipeline *output* you depend on (build binaries, test results); a cache is a best-effort speed optimisation for *inputs* (downloaded packages) that can be silently missed without failing the build. Never use a cache to pass required data between jobs.
 - **`timeoutInMinutes`** — set on a job (kills the whole job, all remaining steps) or a step (kills just that step, independent of the job's own budget). Defaults to 60 minutes on Microsoft-hosted agents but is *unlimited* on self-hosted agents — always set it explicitly there.
 - **`cancelTimeoutInMinutes`** — the grace period given to steps with `condition: always()` to finish after a job is cancelled or times out, before the agent process is force-killed. Pair it with an always-run cleanup step (see `13`).
@@ -128,6 +155,6 @@ this sandbox. To try one for real:
 
 1. Create (or use an existing) Azure DevOps project with a pipeline pointed at this repo.
 2. Copy the contents of whichever `pipelines/*.yml` file you want to try into your pipeline's YAML path (commonly `azure-pipelines.yml` at the repo root), or set the pipeline's YAML file path directly to `experiments/azure-yaml-pipelines-examples/pipelines/<file>.yml`.
-3. Files `10`, `11`, and `12` reference templates via relative paths (`../templates/...`) — keep the `templates/` folder alongside `pipelines/` if you copy things out, or just point the pipeline definition at the file in place.
+3. Files `10`, `11`, `12`, and `14` reference templates via relative paths (`../templates/...`) — keep the `templates/` folder alongside `pipelines/` if you copy things out, or just point the pipeline definition at the file in place.
 4. Files referencing `dotnet`/`npm`/language-specific tasks assume a matching app in the repo; swap those steps for your actual build tool if you're following along with a different stack — the pipeline *structure* (stages/jobs/conditions/templates) is language-agnostic.
-5. `09` and `10`'s `environment:` targets (`dev`, `staging`, `production`) need to exist as Environments in your Azure DevOps project (Pipelines → Environments) before a deployment job can target them; that's also where you'd configure the approval gates the comments describe.
+5. `09`, `10`, and `14` (when `runDeploy` is toggled on)'s `environment:` targets (`dev`, `staging`, `production`) need to exist as Environments in your Azure DevOps project (Pipelines → Environments) before a deployment job can target them; that's also where you'd configure the approval gates the comments describe.
