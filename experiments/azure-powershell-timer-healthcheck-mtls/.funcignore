@@ -1,0 +1,8 @@
+.git*
+.vscode
+local.settings.json
+local-certs/
+test
+*.Tests.ps1
+README.md
+infra/

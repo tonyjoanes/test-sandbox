@@ -1,0 +1,20 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "powershell",
+
+    "HEALTHCHECK_TARGET_URL": "https://internal-app.contoso.internal/health",
+    "HEALTHCHECK_TIMEOUT_SECONDS": "10",
+    "HEALTHCHECK_MAX_ATTEMPTS": "2",
+
+    "CLIENT_CERT_THUMBPRINT": "0000000000000000000000000000000000000000",
+
+    "_comment_local_dev_only": "The two settings below are ONLY read when the Cert:\\CurrentUser\\My provider (the one Azure Functions wires up in the cloud) is not present, i.e. when running func start on a workstation. Never set these in Azure — use WEBSITE_LOAD_CERTIFICATES + an App Service / Key Vault certificate there instead. Point this at a local dev-only PFX, never commit the file or the password.",
+    "LOCAL_DEV_PFX_PATH": "./local-certs/dev-client.pfx",
+    "LOCAL_DEV_PFX_PASSWORD": "replace-me-do-not-commit"
+  },
+  "Host": {
+    "LocalHttpPort": 7071
+  }
+}
