@@ -1,0 +1,44 @@
+# The harness — a normal pipeline definition that calls the real templates under test with a
+# small matrix of representative parameter sets. It has exactly one job: exist, so it CAN be
+# expanded. Nobody queues it as a real run — see ../gate/validate-template-pr.yml, which
+# expands it via the Pipelines Preview API instead. This file gets registered as an Azure
+# DevOps Pipeline object once (see ../../README.md's setup steps); after that, its pipeline ID
+# is what the gate targets.
+#
+# Note this calls `template:` with no `@alias` at all — the target template
+# (azure-squad-cicd-identity/pipelines/templates/deploy-stage.yml) lives in the SAME repo as
+# this harness. That's deliberate: it's exactly the setup where someone once added an
+# unnecessary `@reponame` and broke the reference (see README.md's worked example) — a
+# same-repo template needs no alias, and adding one anyway is the bug.
+#
+# The two entries below mirror the real calls in
+# ../../azure-squad-cicd-identity/pipelines/deploy-workload.yml — this isn't a synthetic
+# example, it's the actual sandbox and landing-zone invocations a squad's pipeline makes. If a
+# template change breaks either shape, this fails the same way that pipeline would have.
+
+trigger: none
+pr: none
+# Intentionally no automatic trigger — see ../gate/validate-template-pr.yml for what actually
+# triggers validation on a PR. This file only needs to exist as a registered Pipeline object
+# for the Preview API to expand.
+
+stages:
+  - template: ../../azure-squad-cicd-identity/pipelines/templates/deploy-stage.yml
+    parameters:
+      tier: sandbox
+      environmentName: sq-payments-sandbox
+      serviceConnection: payments-sandbox
+      subscriptionId: '00000000-0000-0000-0000-000000000000'
+      resourceGroupName: rg-payments-blob-store
+      templateFile: '../azure-bicep-module-contracts-governance/workload/team-blob-store/main.bicep'
+      parametersFile: 'params/sandbox.bicepparam'
+
+  - template: ../../azure-squad-cicd-identity/pipelines/templates/deploy-stage.yml
+    parameters:
+      tier: landingZone
+      environmentName: sq-payments-landing-zone
+      serviceConnection: payments-landingZone
+      subscriptionId: '00000000-0000-0000-0000-000000000000'
+      resourceGroupName: rg-payments-blob-store
+      templateFile: '../azure-bicep-module-contracts-governance/workload/team-blob-store/main.bicep'
+      parametersFile: 'params/landing-zone.bicepparam'
