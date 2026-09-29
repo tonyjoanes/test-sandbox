@@ -1,0 +1,48 @@
+# A squad's actual pipeline — thin, because the real logic lives in templates/deploy-stage.yml.
+# Deploys the SAME workload module used as the example in
+# azure-bicep-module-contracts-governance/workload/team-blob-store/main.bicep, into whichever
+# subscription azure-landing-zone-squad-vending vended for this squad: this file is the "how"
+# that connects those two experiments' "what" and "where" end to end.
+#
+# Promotion mirrors the sandbox -> landing-zone graduation path from
+# ../../azure-landing-zone-squad-vending/intake/request-template.md: sandbox deploys on every
+# push to main, no approval gate. landing-zone only deploys on a release tag, and only after
+# the landing-zone Environment's required approvers sign off in the Azure DevOps portal.
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  - name: workloadTemplate
+    value: '../azure-bicep-module-contracts-governance/workload/team-blob-store/main.bicep'
+
+stages:
+  - template: templates/deploy-stage.yml
+    parameters:
+      tier: sandbox
+      environmentName: sq-payments-sandbox
+      serviceConnection: payments-sandbox
+      subscriptionId: $(sandboxSubscriptionId)
+      resourceGroupName: rg-payments-blob-store
+      templateFile: $(workloadTemplate)
+      parametersFile: 'params/sandbox.bicepparam'
+
+  # Landing-zone deploy only fires on a release tag — a sandbox deploy on every push to main
+  # is cheap enough to be unconditional; a landing-zone deploy carries a real network/spend
+  # commitment (see the two tiers' contrast in azure-landing-zone-squad-vending/README.md), so
+  # it's deliberately not something a routine push triggers on its own.
+  - ${{ if startsWith(variables['Build.SourceBranch'], 'refs/tags/release-') }}:
+      - template: templates/deploy-stage.yml
+        parameters:
+          tier: landingZone
+          environmentName: sq-payments-landing-zone
+          serviceConnection: payments-landingZone
+          subscriptionId: $(landingZoneSubscriptionId)
+          resourceGroupName: rg-payments-blob-store
+          templateFile: $(workloadTemplate)
+          parametersFile: 'params/landing-zone.bicepparam'
