@@ -1,0 +1,97 @@
+# Reusable deployment stage, parameterized by tier — a squad's actual pipeline
+# (../deploy-workload.yml) is two calls to this template, not two near-duplicate stages that
+# drift out of sync with each other the first time someone edits only one of them.
+#
+# Note for anyone used to GitHub Actions OIDC: there's no `id-token: write` permission block
+# or explicit token-exchange step here. In Azure DevOps, workload identity federation is
+# configured entirely on the SERVICE CONNECTION (Project Settings → Service connections → new
+# Azure Resource Manager connection → "Workload Identity federation", pointing at the app
+# registration ../identity/ci-identity.bicep created). Once that's set up, AzureCLI@2 just
+# references the service connection by name and the token exchange happens invisibly — the
+# YAML looks identical to a secret-based service connection. The federated credential's
+# subject claim (`sc://<org>/<project>/<service-connection-name>`) is what ties a specific
+# service connection to a specific identity — get that name wrong and the exchange fails at
+# runtime, not at pipeline-authoring time.
+
+parameters:
+  - name: tier
+    type: string
+    values:
+      - sandbox
+      - landingZone
+  - name: environmentName
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: subscriptionId
+    type: string
+  - name: resourceGroupName
+    type: string
+  - name: templateFile
+    type: string
+  - name: parametersFile
+    type: string
+
+stages:
+  - stage: Deploy_${{ parameters.tier }}
+    displayName: 'Deploy — ${{ parameters.tier }}'
+    jobs:
+      - job: Validate
+        displayName: 'bicep build + lint (fails before any Azure call is made)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - script: |
+              set -euo pipefail
+              az bicep build --file ${{ parameters.templateFile }}
+              az bicep lint --file ${{ parameters.templateFile }}
+            displayName: 'Validate template'
+
+      # `environment: ${{ parameters.environmentName }}` is what actually gates this. The
+      # sandbox Environment has no approvers configured in the ADO portal — this runs
+      # immediately. The landing-zone Environment does — this job pauses here until someone
+      # with rights on that Environment approves it. Same YAML, different behaviour, entirely
+      # because of portal configuration neither file in this repo controls — see
+      # ../../README.md's Environments section for what to set up and why it lives there
+      # instead of in YAML.
+      - deployment: Deploy
+        displayName: 'what-if + deploy'
+        dependsOn: Validate
+        environment: ${{ parameters.environmentName }}
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'what-if (preview the diff before it applies)'
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      # Resource-group scope, not subscription scope: the workload modules
+                      # this deploys (e.g. azure-bicep-module-contracts-governance/workload/)
+                      # declare `targetScope = 'resourceGroup'`, so that's what --subscription
+                      # + --resource-group here actually target.
+                      az deployment group what-if \
+                        --subscription ${{ parameters.subscriptionId }} \
+                        --resource-group ${{ parameters.resourceGroupName }} \
+                        --template-file ${{ parameters.templateFile }} \
+                        --parameters ${{ parameters.parametersFile }}
+
+                - task: AzureCLI@2
+                  displayName: 'deploy'
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      az deployment group create \
+                        --subscription ${{ parameters.subscriptionId }} \
+                        --resource-group ${{ parameters.resourceGroupName }} \
+                        --template-file ${{ parameters.templateFile }} \
+                        --parameters ${{ parameters.parametersFile }}
