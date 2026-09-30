@@ -1,0 +1,43 @@
+# The actual PR check. Triggered on any PR touching a template — expands ../harness/
+# validate-templates.yml via the Pipelines Preview API, using the PR's own branch as the
+# source, and fails the PR with the API's exact resolution error if expansion fails. No job
+# from the harness pipeline ever runs; Preview only compiles and resolves it. That's what makes
+# this safe to run on every PR with no real Azure credentials involved at all — it can't
+# accidentally trigger a real deployment, because nothing is ever queued.
+#
+# Uses $(System.AccessToken) — this pipeline's own scoped OAuth token — to call the Preview
+# API, not a stored PAT. Requires "Allow scripts to access the OAuth token" enabled for this
+# pipeline (Azure DevOps → pipeline → Edit → ... → Triggers → the pipeline's own settings), and
+# the pipeline's build service account needs Read access to the harness pipeline (usually true
+# by default within the same project).
+
+trigger: none
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - 'pipelines/templates/*.yml'
+      - 'harness/validate-templates.yml'
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  # The harness pipeline's ID from Azure DevOps → Pipelines, after it's been registered once
+  # (see ../../README.md). Illustrative placeholder — replace with the real ID.
+  harnessPipelineId: 42
+
+steps:
+  - script: |
+      set -euo pipefail
+      chmod +x scripts/preview-check.sh
+      ./scripts/preview-check.sh \
+        "$(System.CollectionUri)" \
+        "$(System.TeamProject)" \
+        "$(harnessPipelineId)" \
+        "$(System.PullRequest.SourceBranch)" \
+        "$(System.AccessToken)"
+    displayName: 'Expand harness pipeline via Preview API against this PR'
+    workingDirectory: 'experiments/azure-pipeline-template-validation/gate'
