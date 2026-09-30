@@ -141,6 +141,29 @@ Six places the model as written doesn't fully hold up — worth resolving before
 
 ---
 
+## Default Groups That Bypass the Model
+
+Any Entra-first access model sits on top of groups and roles that exist by default, independent of anything the model documents. Three layers, each with its own defaults worth auditing before trusting the model alone.
+
+### Entra ID Defaults
+
+- **Every group has an Owner**, separate from its membership — usually whoever created it. Owners can add or remove members directly, with no ticket and no approval step. Any "this is the only front door for membership changes" claim only holds if group creation itself is locked to a controlled set of people; otherwise every group's Owner is a second, invisible front door.
+- **The baseline directory role every account gets** ("User" in Entra) includes reading basic directory information — other users, other groups' names and membership — tenant-wide, by default, independent of anything a custom access model grants or restricts.
+
+### Azure RBAC Defaults
+
+- **Implicit subscription Owner on creation.** Whoever or whatever creates a subscription can end up with Owner on it unless that's explicitly overridden at creation time — worth checking on every subscription rather than assuming it away.
+- **Classic Administrators** (Co-Administrator / Service Administrator) are a legacy admin model that predates RBAC entirely and bypasses it — full control, invisible to any RBAC-based access review. A common audit finding is at least one subscription still carrying one.
+- **Inheritance from higher scopes.** A role assigned at a management group or subscription scope applies to every resource under it. A broad role granted higher up the hierarchy (for policy remediation, for centralized logging) is a standing grant on everything below — it has to be audited at the scope it was granted, not rediscovered per resource.
+
+### Azure DevOps Defaults
+
+- **`Contributors` (built-in) defaults to Contribute on every repo in a project**, not just one. If anyone lands in this group directly — rather than only in custom, narrowly-scoped groups — they get broad write access no matter what a custom model says elsewhere.
+- **`Build Administrators` (built-in) is project-wide.** Adding a team's leads to this group directly, instead of scoping their elevation via pipeline-folder security, gives them admin over every team's pipelines, not just their own.
+- **`Project Valid Users`** (everyone with access to the project) is often what's actually delivering a baseline Reader grant in practice. Worth confirming that's where a "Reader by default" behaviour is coming from, rather than assuming a custom group is doing that work.
+
+---
+
 ## Auditor Appendix
 
 Maps to the four CIS themes named in the brief — not a full CIS Controls v8 crosswalk.
