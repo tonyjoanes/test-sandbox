@@ -144,12 +144,17 @@ jobs:
   apply-prod:
     name: Apply (prod)
     needs: apply-staging
-    if: github.event_name == 'push' && vars.AZURE_CLIENT_ID != ''
+    if: github.event_name == 'push' && vars.AZURE_CLIENT_ID_PROD_DEPLOYER != ''
     runs-on: ubuntu-latest
-    # No `environment: prod` yet — that's Part 4 (the approval gate). Once a GitHub
-    # Environment named "prod" exists with a required reviewer, adding `environment: prod`
-    # here is the entire change: this job then pauses for approval before it runs, same YAML
-    # otherwise. See the experiment's README, Part 4.
+    # `environment: prod` is the actual gate: GitHub pauses this job for the Environment's
+    # required reviewer BEFORE the runner even starts, so nothing below executes, nothing
+    # authenticates to Azure, until a human approves. That pause (and who counts as an
+    # approver) is configured on the Environment itself, in the repo's Settings — it
+    # can't be set from inside this YAML, which is deliberate: whoever can edit this file
+    # should not also be able to grant themselves approval by editing the same file. See the
+    # experiment's README, "The Gates", for the exact setup steps and why this repo doesn't
+    # have it configured yet.
+    environment: prod
     permissions:
       id-token: write
       contents: read
@@ -162,9 +167,15 @@ jobs:
           cache-dependency-path: experiments/azure-appconfig-feature-flag-registry/scripts/package-lock.json
       - run: npm ci
         working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      # A DIFFERENT identity from apply-dev/apply-staging's $AZURE_CLIENT_ID — see
+      # README, "The Gates", for why: the standing CI identity only has Data Reader on prod,
+      # so it structurally cannot write here even if this `if`/environment gate were somehow
+      # bypassed. Only this identity, AZURE_CLIENT_ID_PROD_DEPLOYER, holds Data Owner on
+      # prod, and its federated credential trusts nothing but a token minted from a run of
+      # THIS job — which GitHub will not mint until the environment's reviewer approves.
       - uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID_PROD_DEPLOYER }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID_PROD }}
       - run: node apply.mjs --environment prod --apply
