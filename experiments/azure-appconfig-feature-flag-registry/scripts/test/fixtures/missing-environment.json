@@ -1,0 +1,10 @@
+{
+  "name": "missing-environment",
+  "description": "The environments object is missing prod entirely.",
+  "owner": "platform-engineers@contoso.com",
+  "expiry": "2099-01-01",
+  "environments": {
+    "dev": true,
+    "staging": false
+  }
+}

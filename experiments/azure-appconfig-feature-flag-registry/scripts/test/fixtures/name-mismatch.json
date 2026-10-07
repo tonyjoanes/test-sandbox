@@ -1,0 +1,11 @@
+{
+  "name": "this-does-not-match-the-filename",
+  "description": "The name field deliberately does not match this file's name, to test the filename cross-check.",
+  "owner": "platform-engineers@contoso.com",
+  "expiry": "2099-01-01",
+  "environments": {
+    "dev": true,
+    "staging": false,
+    "prod": false
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "expired",
+  "description": "Schema-valid, but its expiry is in the past — should warn, not fail.",
+  "owner": "platform-engineers@contoso.com",
+  "expiry": "2020-01-01",
+  "environments": {
+    "dev": true,
+    "staging": false,
+    "prod": false
+  }
+}

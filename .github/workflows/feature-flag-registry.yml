@@ -1,0 +1,159 @@
+# Validates and applies the feature flag registry in
+# experiments/azure-appconfig-feature-flag-registry/. Scoped via `paths:` so it only runs when
+# that experiment's files change — this repo hosts several unrelated experiments, not just
+# this one.
+#
+# Validation and the dry-run both run on every PR, with zero Azure credentials needed — that's
+# deliberate, see the scripts' own comments. The apply jobs only run on push to main (a merge),
+# and only do anything if this repo has real Azure OIDC federation configured (it doesn't, in
+# this sandbox) — see "Running This For Real" in the experiment's README for what that setup
+# looks like.
+
+name: Feature Flag Registry
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'experiments/azure-appconfig-feature-flag-registry/**'
+      - '.github/workflows/feature-flag-registry.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/azure-appconfig-feature-flag-registry/**'
+      - '.github/workflows/feature-flag-registry.yml'
+
+defaults:
+  run:
+    working-directory: experiments/azure-appconfig-feature-flag-registry
+
+jobs:
+  validate:
+    name: Validate flags against schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: experiments/azure-appconfig-feature-flag-registry/scripts/package-lock.json
+      - run: npm ci
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      - run: npm test
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      - run: node validate.mjs
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+
+  dry-run:
+    name: Dry-run (${{ matrix.environment }})
+    needs: validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: experiments/azure-appconfig-feature-flag-registry/scripts/package-lock.json
+      - run: npm ci
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      - run: node apply.mjs --environment ${{ matrix.environment }} --dry-run
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+        env:
+          # Reviewer-visible even without real Azure access configured. When the real store
+          # names ARE configured (see below), this shows the exact commands the apply jobs
+          # below would run on merge — the whole point of reviewing a flag change before
+          # it ships.
+          APPCONFIG_STORE_DEV: ${{ vars.APPCONFIG_STORE_DEV }}
+          APPCONFIG_STORE_STAGING: ${{ vars.APPCONFIG_STORE_STAGING }}
+          APPCONFIG_STORE_PROD: ${{ vars.APPCONFIG_STORE_PROD }}
+
+  apply-dev:
+    name: Apply (dev)
+    needs: validate
+    if: github.event_name == 'push' && vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: experiments/azure-appconfig-feature-flag-registry/scripts/package-lock.json
+      - run: npm ci
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID_DEV }}
+      - run: node apply.mjs --environment dev --apply
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+        env:
+          APPCONFIG_STORE_DEV: ${{ vars.APPCONFIG_STORE_DEV }}
+
+  apply-staging:
+    name: Apply (staging)
+    needs: apply-dev
+    if: github.event_name == 'push' && vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: experiments/azure-appconfig-feature-flag-registry/scripts/package-lock.json
+      - run: npm ci
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID_STAGING }}
+      - run: node apply.mjs --environment staging --apply
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+        env:
+          APPCONFIG_STORE_STAGING: ${{ vars.APPCONFIG_STORE_STAGING }}
+
+  apply-prod:
+    name: Apply (prod)
+    needs: apply-staging
+    if: github.event_name == 'push' && vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    # No `environment: prod` yet — that's Part 4 (the approval gate). Once a GitHub
+    # Environment named "prod" exists with a required reviewer, adding `environment: prod`
+    # here is the entire change: this job then pauses for approval before it runs, same YAML
+    # otherwise. See the experiment's README, Part 4.
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: experiments/azure-appconfig-feature-flag-registry/scripts/package-lock.json
+      - run: npm ci
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID_PROD }}
+      - run: node apply.mjs --environment prod --apply
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+        env:
+          APPCONFIG_STORE_PROD: ${{ vars.APPCONFIG_STORE_PROD }}

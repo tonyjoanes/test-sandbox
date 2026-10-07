@@ -1,0 +1,12 @@
+{
+  "name": "extra-property",
+  "description": "Carries an undeclared top-level property, which additionalProperties: false should reject.",
+  "owner": "platform-engineers@contoso.com",
+  "expiry": "2099-01-01",
+  "jiraTicket": "PLAT-1234",
+  "environments": {
+    "dev": true,
+    "staging": false,
+    "prod": false
+  }
+}

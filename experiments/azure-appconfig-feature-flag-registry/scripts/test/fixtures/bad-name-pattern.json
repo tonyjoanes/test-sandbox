@@ -1,0 +1,11 @@
+{
+  "name": "Bad_Name_Pattern",
+  "description": "Name uses uppercase and underscores instead of kebab-case.",
+  "owner": "platform-engineers@contoso.com",
+  "expiry": "2099-01-01",
+  "environments": {
+    "dev": true,
+    "staging": false,
+    "prod": false
+  }
+}

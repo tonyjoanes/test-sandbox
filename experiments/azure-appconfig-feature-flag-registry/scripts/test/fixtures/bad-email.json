@@ -1,0 +1,11 @@
+{
+  "name": "bad-email",
+  "description": "Owner is not a valid email address.",
+  "owner": "payments-squad",
+  "expiry": "2099-01-01",
+  "environments": {
+    "dev": true,
+    "staging": false,
+    "prod": false
+  }
+}
