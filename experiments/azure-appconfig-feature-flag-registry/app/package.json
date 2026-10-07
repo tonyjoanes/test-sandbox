@@ -1,0 +1,14 @@
+{
+  "name": "feature-flag-registry-demo-app",
+  "private": true,
+  "type": "module",
+  "description": "Minimal app proving the registry's flags are consumable for real, via the official Microsoft feature management library.",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.3",
+    "@azure/app-configuration-provider": "^2.6.0",
+    "@microsoft/feature-management": "^2.3.1"
+  }
+}
