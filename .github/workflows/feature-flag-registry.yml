@@ -45,6 +45,20 @@ jobs:
       - run: node validate.mjs
         working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
 
+  check-flag-references:
+    name: Check app code references real flags
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # No `npm ci` here on purpose — the check greps app source as plain text, it never
+      # imports or runs it, so the app's own dependencies aren't needed to check it.
+      - run: node check-flag-references.mjs
+        working-directory: experiments/azure-appconfig-feature-flag-registry/scripts
+
   dry-run:
     name: Dry-run (${{ matrix.environment }})
     needs: validate
@@ -75,7 +89,7 @@ jobs:
 
   apply-dev:
     name: Apply (dev)
-    needs: validate
+    needs: [validate, check-flag-references]
     if: github.event_name == 'push' && vars.AZURE_CLIENT_ID != ''
     runs-on: ubuntu-latest
     permissions:

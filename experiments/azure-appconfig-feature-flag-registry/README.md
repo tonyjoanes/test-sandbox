@@ -3,12 +3,12 @@
 A central registry for feature flags, backed by Azure App Configuration's **classic** feature
 flag model — one JSON file per flag, schema-validated in CI, applied per environment via
 `az appconfig feature enable/disable`. Unlike most of the reference material elsewhere in this
-repo, the validation and dry-run parts of this one are genuinely runnable, with tests proving
-it — see [Running This Yourself](#running-this-yourself).
+repo, the validation, dry-run, and compile-time-check parts of this one are genuinely runnable,
+with tests proving it — see [Running This Yourself](#running-this-yourself).
 
-> This covers **Part 1 (the registry)** and **Part 2 (the registry pipeline)** of the original
-> five-part plan — the core loop. Parts 3–5 (app-side compile check, RBAC gates, full demo
-> walkthrough) aren't built yet.
+> This covers **Part 1 (the registry)**, **Part 2 (the registry pipeline)**, and **Part 3
+> (the app side + compile-time check)** of the original five-part plan. Parts 4–5 (RBAC gates,
+> full demo walkthrough) aren't built yet.
 
 ---
 
@@ -61,8 +61,9 @@ See `flags/schema.json` for the full JSON Schema, with field-by-field reasoning 
 | Job | Trigger | What it does | Needs Azure? |
 |---|---|---|---|
 | `validate` | Every PR + push to main | Schema validation + the validator's own test suite | No |
+| `check-flag-references` | Every PR + push to main, after `validate` | Greps `app/` for flag references and fails on any not in the registry | No |
 | `dry-run` | Every PR, one per environment | Prints the exact `az` commands a merge would run, no calls made | No |
-| `apply-dev` / `apply-staging` / `apply-prod` | Push to main only | Actually runs `az appconfig feature set` + `enable`/`disable` per environment, in order | Yes — and only runs at all if `vars.AZURE_CLIENT_ID` is set |
+| `apply-dev` / `apply-staging` / `apply-prod` | Push to main only, after `check-flag-references` | Actually runs `az appconfig feature set` + `enable`/`disable` per environment, in order | Yes — and only runs at all if `vars.AZURE_CLIENT_ID` is set |
 
 The apply jobs use `azure/login@v2` with **workload identity federation (OIDC)** —
 `client-id` / `tenant-id` / `subscription-id` as plain repo variables, no client secret stored
@@ -78,6 +79,44 @@ in its own header comment.
 
 ---
 
+## The App Side And The Compile-Time Check
+
+[`app/src/index.mjs`](app/src/index.mjs) is a minimal, real app: it connects to Azure App
+Configuration via `DefaultAzureCredential` (no connection string, same no-stored-secret
+principle as the pipeline's OIDC) and the official
+[`@microsoft/feature-management`](https://www.npmjs.com/package/@microsoft/feature-management)
+library, then checks `payments-v2` with `featureManager.isEnabled('payments-v2')`. This is the
+one part of the whole experiment that genuinely needs a live App Configuration store to run end
+to end — everything else needs zero Azure access. Proven for real, not just written: with a
+fake endpoint it reaches the actual Azure SDK and fails at the credential/network boundary, not
+a code bug (see the commit history for the exact output).
+
+[`scripts/check-flag-references.mjs`](scripts/check-flag-references.mjs) is the compile-time
+check: it greps everything under `app/` for `.isEnabled("...")` calls, and fails the build if
+any referenced flag has no matching file in the registry. Rename a flag in the registry without
+updating the code (or vice versa), and this fails the build with the exact file and line —
+before anything ships, not after a flag lookup silently returns the library's default at
+runtime. It also warns (doesn't fail) on a registered flag nothing references — a candidate for
+removal, same hygiene idea as the expiry warning.
+
+This is a grep, not a real parser — it matches the literal-string-argument pattern the demo app
+actually uses. A dynamically-built flag name (`isEnabled(someVariable)`) is invisible to it; see
+[Known Gaps](#known-gaps).
+
+```
+$ node check-flag-references.mjs
+  OK   payments-v2  (.../app/src/index.mjs:39)
+
+Checked 1 reference(s) against 1 registered flag(s) — all referenced flags exist.
+```
+
+The pipeline runs this as its own job, `check-flag-references`, right after schema validation —
+no Azure needed, no `npm ci` even, since it reads app source as plain text rather than running
+it. The `apply-dev` job (and the `apply-staging` / `apply-prod` jobs chained after it) now also
+depend on it passing, so a broken flag reference blocks a real deployment, not just a PR check.
+
+---
+
 ## Running This Yourself
 
 No Azure needed for either of these — that's the point.
@@ -89,9 +128,13 @@ npm install
 # Validate every real flag in ../flags/ — same thing CI runs on every PR.
 node validate.mjs
 
-# Run the validator's own test suite: 8 cases, including fixtures designed to fail
-# (bad name pattern, missing field, filename/name mismatch, expired flag, ...).
+# Run the validator's and compile-time check's own test suites: 11 cases, including
+# fixtures designed to fail (bad name pattern, missing field, filename/name mismatch,
+# expired flag, a flag referenced in code but missing from the registry, ...).
 npm test
+
+# Check the real app's code against the real registry — no Azure needed, it's a grep.
+node check-flag-references.mjs
 
 # See exactly what a merge would do, for one environment, with zero Azure credentials.
 APPCONFIG_STORE_DEV=appcs-contoso-dev node apply.mjs --environment dev --dry-run
@@ -99,7 +142,8 @@ APPCONFIG_STORE_DEV=appcs-contoso-dev node apply.mjs --environment dev --dry-run
 
 Try breaking something: edit `flags/payments-v2.json` to set `"name": "Payments-V2"` (capital
 letters) and re-run `node validate.mjs` — it fails with the exact schema rule it violated, not
-a generic error.
+a generic error. Or edit `app/src/index.mjs` to check `'payments-v3'` instead and re-run
+`node check-flag-references.mjs` — same idea, a different layer of the pipeline catching it.
 
 ---
 
@@ -128,8 +172,13 @@ no other YAML change needed.
 - **Expired flags warn, don't fail.** A hard failure on a past-expiry flag is the obvious next
   step, but it needs a decision on grace period and who's allowed to override it — left open
   rather than guessed at.
-- **No stale-flag detection.** Nothing here checks whether a flag is still referenced in code —
-  that's Part 3 (the compile-time check), not built yet.
+- **The compile-time check is a grep, not a parser.** It matches literal-string arguments to
+  `.isEnabled(...)` — a flag name built at runtime (`isEnabled(someVariable)`,
+  `` isEnabled(`${prefix}-v2`) ``) is invisible to it. Fine for a small demo app; a real
+  codebase with many call sites would want an actual AST-based check eventually.
+- **The unused-flag warning only scans `app/`.** A flag genuinely used by some other service
+  entirely would show as a false "candidate for removal" — it's a hint for a human to check,
+  not an automatic deletion signal.
 - **No approval gate on prod.** `apply-prod`'s comment marks exactly where `environment: prod`
   attaches once that GitHub Environment and its required reviewer exist — that's Part 4.
 - **One registry, one set of three environments.** Multiple domains/squads each needing their
