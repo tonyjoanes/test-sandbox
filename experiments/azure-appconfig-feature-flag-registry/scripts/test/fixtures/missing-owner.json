@@ -1,0 +1,10 @@
+{
+  "name": "missing-owner",
+  "description": "Missing the required owner field.",
+  "expiry": "2099-01-01",
+  "environments": {
+    "dev": true,
+    "staging": false,
+    "prod": false
+  }
+}

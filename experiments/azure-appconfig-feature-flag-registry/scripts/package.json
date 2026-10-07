@@ -1,0 +1,14 @@
+{
+  "name": "feature-flag-registry-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Validation and apply scripts for the Azure App Configuration feature flag registry example.",
+  "scripts": {
+    "validate": "node validate.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

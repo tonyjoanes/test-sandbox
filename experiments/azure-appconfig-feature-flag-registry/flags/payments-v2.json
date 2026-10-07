@@ -1,0 +1,11 @@
+{
+  "name": "payments-v2",
+  "description": "New payments processing flow replacing the legacy direct-integration path. Gates the rewritten checkout service introduced in Q3.",
+  "owner": "payments-squad@contoso.com",
+  "expiry": "2026-12-31",
+  "environments": {
+    "dev": true,
+    "staging": true,
+    "prod": false
+  }
+}

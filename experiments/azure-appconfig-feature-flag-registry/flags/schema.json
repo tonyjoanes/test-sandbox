@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/feature-flag.schema.json",
+  "title": "Feature Flag",
+  "description": "One flag in the central registry. Classic Azure App Configuration feature flag model — a plain on/off per environment, no conditional filters. See ../README.md for why classic over the (preview) enhanced model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "owner", "expiry", "environments"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Kebab-case flag key. Must match this file's name without the .json extension — scripts/validate.mjs checks this, the schema alone can't."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What the flag gates and why it exists. Not \"what it does technically\" — a reader should be able to tell from this alone whether the flag is still needed."
+    },
+    "owner": {
+      "type": "string",
+      "format": "email",
+      "description": "A squad alias, not an individual — see the main access-model doc's reasoning on why group identities outlive the person who happened to add the flag."
+    },
+    "expiry": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date. Every flag gets one, even a flag expected to live a long time — scripts/validate.mjs warns (doesn't yet fail) on a past expiry; see README's Known Gaps."
+    },
+    "environments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dev", "staging", "prod"],
+      "description": "All three required, always, even to explicitly set false — an omitted environment reads as 'forgotten', not 'off'.",
+      "properties": {
+        "dev": { "type": "boolean" },
+        "staging": { "type": "boolean" },
+        "prod": { "type": "boolean" }
+      }
+    }
+  }
+}
