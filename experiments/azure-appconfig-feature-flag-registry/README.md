@@ -6,9 +6,9 @@ flag model — one JSON file per flag, schema-validated in CI, applied per envir
 repo, the validation, dry-run, and compile-time-check parts of this one are genuinely runnable,
 with tests proving it — see [Running This Yourself](#running-this-yourself).
 
-> This covers **Part 1 (the registry)**, **Part 2 (the registry pipeline)**, and **Part 3
-> (the app side + compile-time check)** of the original five-part plan. Parts 4–5 (RBAC gates,
-> full demo walkthrough) aren't built yet.
+> This covers **Part 1 (the registry)**, **Part 2 (the registry pipeline)**, **Part 3
+> (the app side + compile-time check)**, and **Part 4 (the gates)** of the original five-part
+> plan. Part 5 (the full demo walkthrough) isn't built yet.
 
 ---
 
@@ -63,7 +63,8 @@ See `flags/schema.json` for the full JSON Schema, with field-by-field reasoning 
 | `validate` | Every PR + push to main | Schema validation + the validator's own test suite | No |
 | `check-flag-references` | Every PR + push to main, after `validate` | Greps `app/` for flag references and fails on any not in the registry | No |
 | `dry-run` | Every PR, one per environment | Prints the exact `az` commands a merge would run, no calls made | No |
-| `apply-dev` / `apply-staging` / `apply-prod` | Push to main only, after `check-flag-references` | Actually runs `az appconfig feature set` + `enable`/`disable` per environment, in order | Yes — and only runs at all if `vars.AZURE_CLIENT_ID` is set |
+| `apply-dev` / `apply-staging` | Push to main only, after `check-flag-references` | Actually runs `az appconfig feature set` + `enable`/`disable` | Yes — only runs if `vars.AZURE_CLIENT_ID` is set |
+| `apply-prod` | Push to main only, after `apply-staging` | Same, but only after a human approves — see [The Gates](#the-gates) | Yes — only runs if `vars.AZURE_CLIENT_ID_PROD_DEPLOYER` is set |
 
 The apply jobs use `azure/login@v2` with **workload identity federation (OIDC)** —
 `client-id` / `tenant-id` / `subscription-id` as plain repo variables, no client secret stored
@@ -117,6 +118,68 @@ depend on it passing, so a broken flag reference blocks a real deployment, not j
 
 ---
 
+## The Gates
+
+The brief's RBAC model, as given: **Data Owner on dev and staging, Data Reader on prod.** Taken
+completely literally, that's unworkable — if the identity that runs `apply-prod` only has Data
+Reader, every `az appconfig feature enable/disable` call in that job returns `403 Forbidden`, no
+matter how much human approval surrounds it. Read a different way, it's exactly right: **Data
+Reader on prod describes the standing CI identity** — the one used for dev and staging, which
+should never be able to touch prod at all, approved or not. Writing to prod needs a *second*,
+narrower identity that doesn't exist until a human says so.
+
+### Two identities, not one
+
+| Identity | Repo variable | Role | Scope | Obtainable when? |
+|---|---|---|---|---|
+| Standing CI identity | `AZURE_CLIENT_ID` | **Data Owner** on dev, staging. **Data Reader** on prod. | Every environment | Any push to `main` — `apply-dev`/`apply-staging` use it freely |
+| Prod deployer | `AZURE_CLIENT_ID_PROD_DEPLOYER` | **Data Owner** on prod only | prod only | Only inside a run of `apply-prod`, and only after the `prod` Environment's required reviewer approves |
+
+The standing identity's Reader grant on prod isn't decorative — it's what the earlier `dry-run`
+job would use if it ever needed to show a real diff against prod's current state (it doesn't
+today; see [Known Gaps](#known-gaps)), and it's what makes "this identity cannot change prod"
+a fact about its RBAC grant, not just a fact about which pipeline steps happen to call it.
+
+### Why this can't be bypassed from inside the YAML
+
+`apply-prod`'s federated credential (the OIDC trust relationship on the
+`AZURE_CLIENT_ID_PROD_DEPLOYER` app registration) is scoped to GitHub's `environment` claim —
+its subject is `repo:<org>/<repo>:environment:prod`. GitHub only includes that claim, and only
+mints a token carrying it, for a job that references `environment: prod` *and* has already
+cleared that environment's required reviewers. There is no code path — no YAML edit, no
+rerunning a different job, no spoofed input — that produces a valid token for this identity
+without GitHub itself having first gated the run on human approval. The approval isn't a
+policy someone has to remember to enforce; it's the only way the credential exchange succeeds.
+
+`apply-prod` in the workflow now carries `environment: prod` for exactly this reason — see its
+comments for the details. Compare `apply-dev` / `apply-staging`, which still use the shared
+`AZURE_CLIENT_ID` with no environment gate: fast, unapproved, because Data Owner on a lower
+environment is cheap to get wrong and cheap to fix.
+
+### Setting up the required reviewer
+
+Creating a GitHub Environment with a protection rule is a repo-settings change, not something
+done from a workflow file or scripted from this sandbox session — Settings → Environments → New
+environment → name it exactly `prod` → **Required reviewers** → add yourself (or whoever should
+approve prod changes) → Save. Once that exists, `apply-prod` will show as **Waiting** the moment
+it would otherwise run, and stays there until an approver acts on it from the Actions tab — a
+real pause, not a cosmetic one, the same mechanism GitHub uses for any protected deployment.
+
+### What this actually demonstrates
+
+With the Environment configured and `AZURE_CLIENT_ID_PROD_DEPLOYER` set (even to a value that
+isn't yet a real Azure identity), merging a flag change to `main`:
+
+1. `apply-dev` and `apply-staging` run immediately — no approval, matching their Data Owner
+   grant on those environments.
+2. `apply-prod` appears in the Actions run as **Waiting for review**, before anything in it has
+   executed — no Azure call has been attempted, because no token exists yet.
+3. Approving it lets the job proceed; declining or ignoring it means prod never changes. A
+   portal edit was never offered as an alternative at any point — there is no UI path to set
+   `AZURE_CLIENT_ID_PROD_DEPLOYER`'s token without this exact sequence.
+
+---
+
 ## Running This Yourself
 
 No Azure needed for either of these — that's the point.
@@ -153,17 +216,23 @@ To actually apply flags, a real deployment needs:
 
 1. Three Azure App Configuration stores (dev/staging/prod), and their names set as GitHub repo
    variables: `APPCONFIG_STORE_DEV`, `APPCONFIG_STORE_STAGING`, `APPCONFIG_STORE_PROD`.
-2. An Entra app registration with a federated credential trusting this repo's GitHub Actions
-   OIDC issuer (subject: `repo:<org>/<repo>:ref:refs/heads/main` for the push-triggered apply
-   jobs) — no client secret. Its client ID, tenant ID, and (per-environment) subscription ID
-   set as repo variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-   `AZURE_SUBSCRIPTION_ID_DEV` / `_STAGING` / `_PROD`.
-3. That app registration granted **App Configuration Data Owner** on the dev and staging
-   stores, **App Configuration Data Reader** on prod — see Part 4 (not yet built) for the
-   reasoning and the human-approval gate that goes with the prod/Reader split.
+2. **Two** Entra app registrations, both with federated credentials — no client secret on
+   either — see [The Gates](#the-gates) for why it's two, not one:
+   - The standing CI identity, subject `repo:<org>/<repo>:ref:refs/heads/main`. Repo variables
+     `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID_DEV` / `_STAGING` / `_PROD`.
+     Granted **Data Owner** on the dev and staging stores, **Data Reader** on prod.
+   - The prod deployer, subject `repo:<org>/<repo>:environment:prod`. Repo variable
+     `AZURE_CLIENT_ID_PROD_DEPLOYER` (reuses the same `AZURE_TENANT_ID` /
+     `AZURE_SUBSCRIPTION_ID_PROD`). Granted **Data Owner** on the prod store only.
+3. The `prod` GitHub Environment itself, with a required reviewer — see
+   [Setting up the required reviewer](#setting-up-the-required-reviewer). Without this, the
+   `environment:` subject claim above is never satisfied and the prod deployer's federated
+   credential can never actually exchange for a token.
 
-Once `AZURE_CLIENT_ID` is set, the `apply-*` jobs stop no-op'ing and start actually running —
-no other YAML change needed.
+Once `AZURE_CLIENT_ID` is set, `apply-dev`/`apply-staging` stop no-op'ing. Once
+`AZURE_CLIENT_ID_PROD_DEPLOYER` is also set *and* the `prod` Environment exists with a required
+reviewer, `apply-prod` starts pausing for approval instead of staying skipped — no further YAML
+change needed either way.
 
 ---
 
@@ -179,7 +248,15 @@ no other YAML change needed.
 - **The unused-flag warning only scans `app/`.** A flag genuinely used by some other service
   entirely would show as a false "candidate for removal" — it's a hint for a human to check,
   not an automatic deletion signal.
-- **No approval gate on prod.** `apply-prod`'s comment marks exactly where `environment: prod`
-  attaches once that GitHub Environment and its required reviewer exist — that's Part 4.
+- **The `prod` Environment isn't configured in this sandbox repo.** `apply-prod` carries
+  `environment: prod` in the workflow, but creating the Environment and its required reviewer
+  is a repo-settings change made in Settings → Environments, not something scriptable from this
+  sandbox session — see [Setting up the required reviewer](#setting-up-the-required-reviewer).
+  Until it exists, `environment: prod` is a no-op gate (GitHub auto-creates an unprotected
+  Environment the first time a workflow references one that doesn't exist).
+- **`dry-run` doesn't actually use the standing identity's Data Reader grant on prod.** It
+  prints what *would* run without calling Azure at all, for any environment. A version that
+  showed a real diff against prod's current state would need to authenticate with the standing
+  identity — not built here, noted as a natural next step, not a gap in what's shipped.
 - **One registry, one set of three environments.** Multiple domains/squads each needing their
   own store naming convention isn't modelled — out of scope for the core loop.
