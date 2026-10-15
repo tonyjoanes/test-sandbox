@@ -1,0 +1,25 @@
+{
+  "//": "Linter rules for every .bicep file in this experiment. CI runs `bicep build` and `bicep lint` against all of them; errors here fail the PR.",
+  "moduleAliases": {
+    "br": {
+      "platform": {
+        "//": "Where the release workflow publishes modules/<name> as br/platform:<name>:<version>. This sandbox references modules by relative path instead, since there is no registry to pull from. See README 'Module versioning'.",
+        "registry": "crplatformsquads.azurecr.io",
+        "modulePath": "platform"
+      }
+    }
+  },
+  "analyzers": {
+    "core": {
+      "enabled": true,
+      "rules": {
+        "no-hardcoded-env-urls": { "level": "error" },
+        "no-unused-params": { "level": "error" },
+        "no-unused-vars": { "level": "error" },
+        "secure-parameter-default": { "level": "error" },
+        "outputs-should-not-contain-secrets": { "level": "error" },
+        "use-recent-api-versions": { "level": "off" }
+      }
+    }
+  }
+}

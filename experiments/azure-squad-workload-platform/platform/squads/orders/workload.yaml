@@ -1,0 +1,11 @@
+# Owned by the orders squad (see CODEOWNERS.example). A PR that only touches this file
+# auto-merges once validation and what-if are green and an orders squad member approves.
+apiVersion: platform/v1
+squad: orders
+repository: tonyjoanes/orders-service
+capabilities:
+  keyVault: true
+  appConfig: true
+  storage: [invoices]
+  topics: [order-placed]
+  expose: { public: true, path: /orders }

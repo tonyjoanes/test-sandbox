@@ -1,0 +1,18 @@
+{
+  "name": "orders-service",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The squad's code: everything a squad repo contains besides its own optional infra/.",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "check": "node --check src/functions/orders.js"
+  },
+  "dependencies": {
+    "@azure/app-configuration": "^1.8.0",
+    "@azure/functions": "^4.6.0",
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0",
+    "@azure/service-bus": "^7.9.5",
+    "@azure/storage-blob": "^12.26.0"
+  }
+}

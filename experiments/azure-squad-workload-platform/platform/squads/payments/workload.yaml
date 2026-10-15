@@ -1,0 +1,10 @@
+# A second, deliberately minimal squad: no public API and no App Config store (cost), just a
+# subscription to the orders squad's topic. Shows a cross-squad dependency declared in a manifest
+# rather than arranged in a ticket.
+apiVersion: platform/v1
+squad: payments
+repository: tonyjoanes/payments-service
+capabilities:
+  keyVault: true
+  subscribe: [orders.order-placed]
+  expose: { public: false }

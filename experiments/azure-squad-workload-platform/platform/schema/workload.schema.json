@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/platform/v1/workload.schema.json",
+  "title": "Squad workload manifest (platform/v1)",
+  "description": "What a squad asks the platform for. One file per squad at squads/<squad>/workload.yaml. The schema is the squad-facing API: anything not described here isn't something a squad can ask for through the manifest (they use their own infra/ folder for that, inside policy).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "squad",
+    "repository",
+    "capabilities"
+  ],
+  "properties": {
+    "apiVersion": {
+      "description": "Versioned so the contract can change without breaking squads already on it. A v2 would sit beside v1 until every squad had moved.",
+      "const": "platform/v1"
+    },
+    "squad": {
+      "description": "Becomes the resource group name (rg-squad-<squad>), the squad tag value, and the prefix on every shared resource (topics, API paths). Short and lowercase because several Azure names it feeds into are length-limited (Key Vault: 24 chars).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{1,11}$"
+    },
+    "repository": {
+      "description": "The squad's code repo (owner/name). The squad deployer identity trusts OIDC tokens from this repo's 'production' GitHub environment and nothing else.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keyVault": {
+          "description": "One Key Vault, RBAC mode, private endpoint only. The function app gets Key Vault Secrets User.",
+          "type": "boolean",
+          "default": false
+        },
+        "appConfig": {
+          "description": "One Standard App Configuration store, private endpoint only. The function app gets App Configuration Data Reader. About $36/month each at list price, so off by default.",
+          "type": "boolean",
+          "default": false
+        },
+        "storage": {
+          "description": "Blob containers in one squad data storage account. The function app gets Storage Blob Data Contributor on each container, not the whole account.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9]|-(?!-)){1,40}[a-z0-9]$"
+          },
+          "default": []
+        },
+        "topics": {
+          "description": "Topics this squad publishes, created in the shared namespace as <squad>.<topic>. The function app gets Data Sender on each topic only.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,40}$"
+          },
+          "default": []
+        },
+        "subscribe": {
+          "description": "Topics (any squad's, fully qualified as <squad>.<topic>) this squad consumes. Creates a subscription named after this squad. The function app gets Data Receiver on that subscription only.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]{1,11}\\.[a-z][a-z0-9-]{1,40}$"
+          },
+          "default": []
+        },
+        "expose": {
+          "description": "Publish the function's HTTP API through APIM and Front Door.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "public"
+          ],
+          "properties": {
+            "public": {
+              "type": "boolean"
+            },
+            "path": {
+              "description": "Single segment, e.g. /orders. Must be unique across all squads (checked by validate.mjs, which can see every manifest; the schema only sees one).",
+              "type": "string",
+              "pattern": "^/[a-z][a-z0-9-]{1,30}$"
+            }
+          },
+          "if": {
+            "properties": {
+              "public": {
+                "const": true
+              }
+            },
+            "required": [
+              "public"
+            ]
+          },
+          "then": {
+            "properties": {
+              "path": true
+            },
+            "required": [
+              "path"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

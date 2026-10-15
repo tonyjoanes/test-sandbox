@@ -1,0 +1,91 @@
+# Manual operations for experiments/azure-squad-workload-platform/:
+#
+#   release-module   publish platform/modules/<module> to the registry as <version>, then tag
+#                    the commit module/<module>/v<version>. Published from main, so it uses the
+#                    same deployer credential (subject: ref:refs/heads/main) instead of needing
+#                    a second one for tag refs.
+#   teardown-squads  delete every rg-squad-* resource group. The cost guard: a budget alert
+#                    only notifies, it doesn't stop anything. Backbone and identities stay.
+#
+# Both need vars.PLATFORM_DEPLOYER_CLIENT_ID; neither runs in this sandbox.
+
+name: Squad Workload Platform (ops)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [release-module, teardown-squads]
+      module:
+        description: 'release-module: folder name under platform/modules/'
+        required: false
+      version:
+        description: 'release-module: semver, e.g. 1.2.0'
+        required: false
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  release-module:
+    if: inputs.action == 'release-module' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check inputs and that the version is new
+        env:
+          MODULE: ${{ inputs.module }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$MODULE" =~ ^[a-z-]+$ ]] || { echo "bad module name"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be semver"; exit 1; }
+          f="experiments/azure-squad-workload-platform/platform/modules/$MODULE/main.bicep"
+          [ -f "$f" ] || { echo "no module at $f"; exit 1; }
+          grep -q "metadata version = '$VERSION'" "$f" || { echo "bump metadata version in $f to $VERSION first"; exit 1; }
+          if git ls-remote --exit-code --tags origin "module/$MODULE/v$VERSION" > /dev/null; then
+            echo "module/$MODULE/v$VERSION already exists; published versions are immutable"; exit 1
+          fi
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.PLATFORM_DEPLOYER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - env:
+          MODULE: ${{ inputs.module }}
+          VERSION: ${{ inputs.version }}
+          REGISTRY: ${{ vars.PLATFORM_REGISTRY_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          az bicep publish \
+            --file "experiments/azure-squad-workload-platform/platform/modules/$MODULE/main.bicep" \
+            --target "br:$REGISTRY/platform/$MODULE:$VERSION" \
+            --with-source
+          git tag "module/$MODULE/v$VERSION"
+          git push origin "module/$MODULE/v$VERSION"
+
+  teardown-squads:
+    if: inputs.action == 'teardown-squads' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.PLATFORM_DEPLOYER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - run: |
+          set -euo pipefail
+          for rg in $(az group list --query "[?starts_with(name, 'rg-squad-')].name" -o tsv); do
+            echo "Deleting $rg"
+            az group delete --name "$rg" --yes
+          done
+          # Soft-deleted Key Vaults and App Config stores keep their names reserved, and the
+          # next deploy uses the same deterministic names, so purge them or the redeploy fails.
+          for kv in $(az keyvault list-deleted --query "[?starts_with(name, 'kv-')].name" -o tsv); do
+            az keyvault purge --name "$kv"
+          done
+          for cs in $(az appconfig list-deleted --query "[?starts_with(name, 'appcs-')].name" -o tsv); do
+            az appconfig purge --name "$cs" --yes
+          done

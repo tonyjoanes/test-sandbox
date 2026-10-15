@@ -1,0 +1,14 @@
+# What makes "self-service through a PR" true rather than aspirational: a squad's own folder
+# is approved by that squad, not by the platform team. Combined with branch protection
+# ("require code owner review" + required status checks) and auto-merge, a manifest-only PR
+# merges with no platform human involved.
+#
+# Copy to .github/CODEOWNERS in the platform repo. Later rules win, so the catch-all comes first.
+
+*                                   @contoso/platform-team
+
+/platform/squads/orders/            @contoso/squad-orders
+/platform/squads/payments/          @contoso/squad-payments
+
+# The contract itself stays with platform: a squad can use the API, not change it.
+/platform/schema/                   @contoso/platform-team

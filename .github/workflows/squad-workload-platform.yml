@@ -1,0 +1,143 @@
+# The platform pipeline for experiments/azure-squad-workload-platform/. Scoped via `paths:`
+# because this repo hosts several unrelated experiments.
+#
+# PR:            validate manifests, build + lint all Bicep, then what-if per squad (read-only
+#                planner identity). The first two need no Azure at all and always run.
+# push to main:  deploy every squad, publishers before subscribers, with the deployer identity.
+#
+# Both Azure jobs only run if the matching repo variable is set. In this sandbox none are, so
+# what runs is the validation and the Bicep build, which still prove the manifests and the
+# templates are correct.
+#
+# Self-service: with branch protection requiring these checks plus a CODEOWNERS review (see
+# platform/CODEOWNERS.example) and auto-merge enabled, a squad's PR to its own
+# squads/<squad>/workload.yaml merges and deploys with no platform-team human involved.
+
+name: Squad Workload Platform
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'experiments/azure-squad-workload-platform/**'
+      - '.github/workflows/squad-workload-platform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/azure-squad-workload-platform/platform/**'
+      - '.github/workflows/squad-workload-platform.yml'
+
+permissions:
+  contents: read
+
+env:
+  PLATFORM_DIR: experiments/azure-squad-workload-platform/platform
+  LOCATION: uksouth
+
+jobs:
+  validate:
+    name: Validate manifests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.PLATFORM_DIR }}/scripts
+    outputs:
+      squads: ${{ steps.order.outputs.squads }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.PLATFORM_DIR }}/scripts/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: node validate.mjs
+      - id: order
+        run: echo "squads=$(node render-params.mjs --list)" >> "$GITHUB_OUTPUT"
+
+  bicep:
+    name: Build and lint Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: az bicep install
+      # Every .bicep file in the experiment, squad template included. Linter rules set to
+      # "error" in bicepconfig.json fail `bicep build` too, so one command covers both.
+      - run: |
+          set -euo pipefail
+          find experiments/azure-squad-workload-platform -name '*.bicep' -not -path '*/node_modules/*' -print0 |
+            while IFS= read -r -d '' f; do
+              echo "$f"
+              az bicep build --file "$f" --stdout > /dev/null
+            done
+
+  what-if:
+    name: What-if (${{ matrix.squad }})
+    needs: [validate, bicep]
+    if: github.event_name == 'pull_request' && vars.PLATFORM_PLANNER_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        squad: ${{ fromJson(needs.validate.outputs.squads) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: ${{ env.PLATFORM_DIR }}/scripts
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.PLATFORM_PLANNER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - working-directory: ${{ env.PLATFORM_DIR }}
+        run: |
+          node scripts/render-params.mjs --squad "${{ matrix.squad }}" > params.json
+          {
+            echo "### What-if: ${{ matrix.squad }}"
+            echo '```'
+            az deployment sub what-if --location "$LOCATION" --template-file squad/main.bicep \
+              --parameters @params.json --no-pretty-print --result-format ResourceIdOnly
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy squads
+    needs: [validate, bicep]
+    if: github.event_name == 'push' && vars.PLATFORM_DEPLOYER_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    # No `environment:` here on purpose: the deployer's federated credential trusts the subject
+    # repo:<repo>:ref:refs/heads/main, and adding an environment changes the subject.
+    permissions:
+      id-token: write
+      contents: read
+    # One at a time, in order: payments' subscription needs orders' topic to exist.
+    concurrency: squad-workload-platform-deploy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: ${{ env.PLATFORM_DIR }}/scripts
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.PLATFORM_DEPLOYER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - working-directory: ${{ env.PLATFORM_DIR }}
+        run: |
+          set -euo pipefail
+          for squad in $(echo '${{ needs.validate.outputs.squads }}' | jq -r '.[]'); do
+            echo "::group::$squad"
+            node scripts/render-params.mjs --squad "$squad" > "$squad.json"
+            az deployment sub create --name "squad-$squad" --location "$LOCATION" \
+              --template-file squad/main.bicep --parameters @"$squad.json" \
+              --query properties.outputs -o json | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
+          done
