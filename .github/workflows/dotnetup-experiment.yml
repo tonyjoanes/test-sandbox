@@ -1,0 +1,51 @@
+# Runs the dotnetup experiment in experiments/dotnet-dotnetup-toolchain-manager/ for real.
+# Scoped via `paths:` so it only runs when that experiment's files change — this repo hosts
+# several unrelated experiments. Also runnable by hand from the Actions tab (workflow_dispatch),
+# which is the easy way to re-run it later and see whether channels have moved on.
+#
+# The sandbox this repo is usually edited from can't reach the .NET download hosts, so this
+# workflow is where the experiment actually executes. The runner already has a machine-wide
+# .NET in /usr/share/dotnet — the experiment uses that on purpose to prove dotnetup leaves it
+# alone (phase 7).
+
+name: dotnetup Experiment
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/dotnet-dotnetup-toolchain-manager/**'
+      - '.github/workflows/dotnetup-experiment.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/dotnet-dotnetup-toolchain-manager/**'
+      - '.github/workflows/dotnetup-experiment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    name: Run dotnetup experiment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dotnetup (preview)
+        run: |
+          curl -fsSL https://aka.ms/dotnetup/get-dotnetup.sh | bash
+          echo "$HOME/.dotnetup" >> "$GITHUB_PATH"
+
+      - name: Run experiment
+        env:
+          WORK_DIR: ${{ runner.temp }}/dotnetup-experiment
+          RESULTS_DIR: ${{ runner.temp }}/dotnetup-results
+        run: experiments/dotnet-dotnetup-toolchain-manager/scripts/run-experiment.sh
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnetup-experiment-results
+          path: ${{ runner.temp }}/dotnetup-results
