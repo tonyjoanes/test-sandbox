@@ -1,0 +1,37 @@
+<!-- API-to-API: OAuth 2.0 client credentials tokens issued by Entra ID.
+     Named values: tenant-id, api-audience. Apply at API scope; add required-claims per operation. -->
+<policies>
+  <inbound>
+    <base />
+    <validate-jwt header-name="Authorization" failed-validation-httpcode="401"
+                  failed-validation-error-message="Unauthorized" require-scheme="Bearer"
+                  require-expiration-time="true" require-signed-tokens="true" clock-skew="60"
+                  output-token-variable-name="jwt">
+      <openid-config url="https://login.microsoftonline.com/{{tenant-id}}/v2.0/.well-known/openid-configuration" />
+      <audiences>
+        <audience>{{api-audience}}</audience>
+      </audiences>
+      <issuers>
+        <issuer>https://login.microsoftonline.com/{{tenant-id}}/v2.0</issuer>
+        <issuer>https://sts.windows.net/{{tenant-id}}/</issuer>
+      </issuers>
+      <required-claims>
+        <!-- Client-credentials tokens carry app roles in "roles". -->
+        <claim name="roles" match="any">
+          <value>orders.read</value>
+        </claim>
+      </required-claims>
+    </validate-jwt>
+    <!-- Pass the verified caller identity to the backend; strip any spoofed value first. -->
+    <set-header name="X-Apim-Caller-AppId" exists-action="override">
+      <value>@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("azp", ((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("appid", "")))</value>
+    </set-header>
+    <set-header name="X-Apim-Caller-Roles" exists-action="override">
+      <value>@(string.Join(" ", ((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("roles", new string[0])))</value>
+    </set-header>
+    <include-fragment fragment-id="backend-trust" />
+  </inbound>
+  <backend><base /></backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>

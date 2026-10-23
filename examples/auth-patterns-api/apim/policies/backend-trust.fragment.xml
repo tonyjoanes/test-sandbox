@@ -1,0 +1,5 @@
+<!-- Policy fragment "backend-trust": APIM authenticates to the backend with its Managed Identity.
+     The backend validates this token (audience = backend app id URI, appid/azp = APIM identity). -->
+<fragment>
+  <authentication-managed-identity resource="{{backend-app-id-uri}}" />
+</fragment>

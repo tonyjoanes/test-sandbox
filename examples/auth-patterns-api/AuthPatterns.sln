@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{37ADF04B-35FA-49B8-8096-10CBEC586592}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AuthPatterns.Api", "src\AuthPatterns.Api\AuthPatterns.Api.csproj", "{A2FF7BB4-A826-41E9-B2DB-ACC8DA679E1B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{C12A0F4B-0802-4761-83AC-15DE004E544A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AuthPatterns.Api.Tests", "tests\AuthPatterns.Api.Tests\AuthPatterns.Api.Tests.csproj", "{C4679A13-EEBA-4F22-8EFB-CAD3B4FA5569}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A2FF7BB4-A826-41E9-B2DB-ACC8DA679E1B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A2FF7BB4-A826-41E9-B2DB-ACC8DA679E1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A2FF7BB4-A826-41E9-B2DB-ACC8DA679E1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A2FF7BB4-A826-41E9-B2DB-ACC8DA679E1B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C4679A13-EEBA-4F22-8EFB-CAD3B4FA5569}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C4679A13-EEBA-4F22-8EFB-CAD3B4FA5569}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C4679A13-EEBA-4F22-8EFB-CAD3B4FA5569}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C4679A13-EEBA-4F22-8EFB-CAD3B4FA5569}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{A2FF7BB4-A826-41E9-B2DB-ACC8DA679E1B} = {37ADF04B-35FA-49B8-8096-10CBEC586592}
+		{C4679A13-EEBA-4F22-8EFB-CAD3B4FA5569} = {C12A0F4B-0802-4761-83AC-15DE004E544A}
+	EndGlobalSection
+EndGlobal

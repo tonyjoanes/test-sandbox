@@ -1,0 +1,52 @@
+<!-- Inbound webhooks: HMAC-SHA256 over "{timestamp}.{body}".
+     Headers: X-Timestamp (unix seconds), X-Signature ("sha256=<hex>").
+     Named values (Key Vault-backed): webhook-secret-primary, webhook-secret-secondary. -->
+<policies>
+  <inbound>
+    <base />
+    <set-variable name="hmacOk" value="@{
+        var tsHeader = context.Request.Headers.GetValueOrDefault("X-Timestamp", "");
+        var sigHeader = context.Request.Headers.GetValueOrDefault("X-Signature", "");
+        long ts;
+        if (!long.TryParse(tsHeader, out ts)) { return false; }
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (Math.Abs(now - ts) > 300) { return false; }   // replay window: 5 minutes
+        if (!sigHeader.StartsWith("sha256=")) { return false; }
+        var provided = sigHeader.Substring(7).ToLowerInvariant();
+
+        var body = context.Request.Body != null ? context.Request.Body.As<string>(preserveContent: true) : "";
+        var payload = System.Text.Encoding.UTF8.GetBytes(tsHeader + "." + body);
+        var secrets = new [] { "{{webhook-secret-primary}}", "{{webhook-secret-secondary}}" };
+
+        var ok = false;
+        foreach (var secret in secrets) {
+            if (string.IsNullOrEmpty(secret)) { continue; }
+            string expected;
+            using (var h = new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(secret))) {
+                expected = BitConverter.ToString(h.ComputeHash(payload)).Replace("-", "").ToLowerInvariant();
+            }
+            // Constant-time compare (no early exit on mismatch).
+            var diff = expected.Length ^ provided.Length;
+            for (var i = 0; i < expected.Length; i++) {
+                diff |= expected[i] ^ (i < provided.Length ? provided[i] : 0);
+            }
+            ok |= diff == 0;   // evaluate both secrets regardless of result
+        }
+        return ok;
+    }" />
+    <choose>
+      <when condition="@(!(bool)context.Variables["hmacOk"])">
+        <return-response>
+          <set-status code="401" reason="Unauthorized" />
+        </return-response>
+      </when>
+    </choose>
+    <set-header name="X-Apim-Webhook-Verified" exists-action="override">
+      <value>true</value>
+    </set-header>
+    <include-fragment fragment-id="backend-trust" />
+  </inbound>
+  <backend><base /></backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>
