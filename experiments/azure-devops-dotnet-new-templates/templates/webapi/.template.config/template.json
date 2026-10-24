@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Contoso Platform Team",
+  "classifications": [ "Contoso", "Web", "WebAPI" ],
+  "identity": "Contoso.Templates.WebApi.CSharp",
+  "groupIdentity": "Contoso.Templates.WebApi",
+  "name": "Contoso Web API",
+  "shortName": "contoso-webapi",
+  "description": "ASP.NET Core minimal API with Contoso defaults: health checks, ProblemDetails and OpenAPI.",
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "sourceName": "Contoso.WebApi",
+  "preferNameDirectory": true,
+  "symbols": {
+    "EnableOpenApi": {
+      "type": "parameter",
+      "datatype": "bool",
+      "defaultValue": "true",
+      "description": "Expose an OpenAPI document at /openapi/v1.json in Development."
+    },
+    "IncludeSampleEndpoints": {
+      "type": "parameter",
+      "datatype": "bool",
+      "defaultValue": "true",
+      "description": "Include the sample /api/items endpoints. Turn off for an empty starting point."
+    },
+    "HttpPort": {
+      "type": "generated",
+      "generator": "port",
+      "parameters": { "low": 5000, "high": 5300 },
+      "replaces": "5100"
+    },
+    "HttpsPort": {
+      "type": "generated",
+      "generator": "port",
+      "parameters": { "low": 7000, "high": 7300 },
+      "replaces": "7100"
+    }
+  },
+  "sources": [
+    {
+      "modifiers": [
+        {
+          "condition": "(!IncludeSampleEndpoints)",
+          "exclude": [ "Endpoints/**", "Contoso.WebApi.http" ]
+        }
+      ]
+    }
+  ],
+  "primaryOutputs": [
+    { "path": "Contoso.WebApi.csproj" }
+  ],
+  "postActions": [
+    {
+      "id": "restore",
+      "description": "Restore NuGet packages required by this project.",
+      "manualInstructions": [ { "text": "Run 'dotnet restore'" } ],
+      "actionId": "210D431B-A78B-4D2F-B762-4ED3E3EA9025",
+      "continueOnError": true
+    }
+  ]
+}

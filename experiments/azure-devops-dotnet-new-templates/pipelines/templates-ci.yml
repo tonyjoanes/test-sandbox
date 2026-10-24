@@ -1,0 +1,90 @@
+# =============================================================================
+# Contoso.Platform.Templates — build, smoke-test and publish to Azure Artifacts
+# =============================================================================
+# PR builds:   pack + smoke test only (nothing is published).
+# main builds: pack + smoke test, then push the .nupkg to the Azure Artifacts
+#              feed so teams can `dotnet new install Contoso.Platform.Templates`.
+#
+# One-time setup (see README "Setting it up in Azure DevOps"):
+#   1. Create the feed (Artifacts > Create feed) and set `feedName` below.
+#   2. Feed settings > Permissions: give "<Project> Build Service (<Org>)" the
+#      Feed Publisher (Contributor) role, or the push step returns 403.
+# =============================================================================
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [experiments/azure-devops-dotnet-new-templates/*]
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include: [experiments/azure-devops-dotnet-new-templates/*]
+
+variables:
+  templateRoot: experiments/azure-devops-dotnet-new-templates
+  # Project-scoped feed: '<project>/<feed>'. Organisation-scoped feed: just '<feed>'.
+  feedName: 'Platform/platform-templates'
+  # Bump these by hand for breaking/feature changes; the patch number counts up per build
+  # and resets whenever majorMinor changes.
+  majorMinor: '1.0'
+  patch: $[counter(variables['majorMinor'], 0)]
+  ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+    packageVersion: '$(majorMinor).$(patch)'
+  ${{ else }}:
+    # PR builds get a prerelease version so a stray push can never shadow a real release.
+    packageVersion: '$(majorMinor).$(patch)-ci.$(Build.BuildId)'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: PackAndTest
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: UseDotNet@2
+            displayName: Install .NET 10 SDK
+            inputs:
+              packageType: sdk
+              version: 10.0.x
+
+          # Packs the templates, installs them into a scratch template cache, generates a project
+          # from every option combination and builds each one with -warnaserror. If a template
+          # change produces a project that doesn't compile, this is where it fails — not on a
+          # developer's machine the next time someone runs `dotnet new`.
+          - bash: ./scripts/smoke-test.sh
+            displayName: Pack and smoke-test templates
+            workingDirectory: $(templateRoot)
+            env:
+              PACKAGE_VERSION: $(packageVersion)
+              OUTPUT_DIR: $(Build.ArtifactStagingDirectory)/nupkg
+
+          - publish: $(Build.ArtifactStagingDirectory)/nupkg
+            artifact: templates-nupkg
+            displayName: Publish .nupkg as pipeline artifact
+
+  - stage: Publish
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: PushToFeed
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+
+          - download: current
+            artifact: templates-nupkg
+
+          - task: NuGetAuthenticate@1
+            displayName: Authenticate to Azure Artifacts
+
+          - task: DotNetCoreCLI@2
+            displayName: Push Contoso.Platform.Templates $(packageVersion)
+            inputs:
+              command: push
+              packagesToPush: $(Pipeline.Workspace)/templates-nupkg/*.nupkg
+              nuGetFeedType: internal
+              publishVstsFeed: $(feedName)

@@ -1,0 +1,14 @@
+@baseUrl = http://localhost:5100
+
+GET {{baseUrl}}/health
+
+###
+
+POST {{baseUrl}}/api/items
+Content-Type: application/json
+
+{ "name": "first item" }
+
+###
+
+GET {{baseUrl}}/api/items

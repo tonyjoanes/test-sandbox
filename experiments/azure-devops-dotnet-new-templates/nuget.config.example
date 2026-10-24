@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Consumer-side config. Copy to %AppData%\NuGet\NuGet.Config (Windows) / ~/.nuget/NuGet/NuGet.Config
+  (macOS/Linux) to make the feed available everywhere, or drop it next to your solution as
+  nuget.config to scope it to one repo. Replace <org>, <project> and <feed>.
+
+  Organisation-scoped feed URL instead:
+    https://pkgs.dev.azure.com/<org>/_packaging/<feed>/nuget/v3/index.json
+-->
+<configuration>
+  <packageSources>
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+    <add key="platform-templates" value="https://pkgs.dev.azure.com/<org>/<project>/_packaging/<feed>/nuget/v3/index.json" />
+  </packageSources>
+  <!-- Optional: only look for Contoso.* in our feed, everything else on nuget.org. -->
+  <packageSourceMapping>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+    <packageSource key="platform-templates">
+      <package pattern="Contoso.*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>

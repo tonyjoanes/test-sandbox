@@ -1,0 +1,42 @@
+<!--
+  Template PACK project. It never compiles any code — its only job is to zip the folders under
+  templates/ into a NuGet package of type "Template", which `dotnet new install` understands.
+
+  Build it with:  dotnet pack -c Release -o ./artifacts -p:PackageVersion=1.0.0
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- What makes this a template package rather than a library. -->
+    <PackageType>Template</PackageType>
+    <PackageId>Contoso.Platform.Templates</PackageId>
+    <!-- Overridden by the pipeline (-p:PackageVersion=...). This default is only for local packs. -->
+    <PackageVersion>0.0.0-local</PackageVersion>
+    <Title>Contoso Platform project templates</Title>
+    <Authors>Contoso Platform Team</Authors>
+    <Description>dotnet new templates for Contoso services: an ASP.NET Core Web API and an Azure Functions (isolated worker) app.</Description>
+    <PackageTags>dotnet-new;templates;contoso;webapi;azure-functions</PackageTags>
+    <PackageReadmeFile>PACKAGE.md</PackageReadmeFile>
+
+    <!-- Required by the SDK but irrelevant: nothing is compiled. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeContentInPack>true</IncludeContentInPack>
+    <ContentTargetFolders>content</ContentTargetFolders>
+
+    <!-- Don't glob the templates' .cs files into this project. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- Without this, NuGet silently drops dot-folders — including every .template.config/. -->
+    <NoDefaultExcludes>true</NoDefaultExcludes>
+    <!-- NU5128: "lib folder has no matching dependency group" — expected for a template package. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exclude anything produced by building/running a template in place. -->
+    <Content Include="templates\**\*"
+             Exclude="templates\**\bin\**;templates\**\obj\**;templates\**\.vs\**;templates\**\*.user" />
+    <None Include="PACKAGE.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

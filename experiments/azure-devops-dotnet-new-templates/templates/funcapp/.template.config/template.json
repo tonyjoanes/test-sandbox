@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Contoso Platform Team",
+  "classifications": [ "Contoso", "Azure Functions", "Cloud" ],
+  "identity": "Contoso.Templates.FunctionApp.CSharp",
+  "groupIdentity": "Contoso.Templates.FunctionApp",
+  "name": "Contoso Function App",
+  "shortName": "contoso-func",
+  "description": "Azure Functions (isolated worker, .NET 10) with an HTTP trigger, Application Insights wiring and an optional timer trigger.",
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "sourceName": "Contoso.FunctionApp",
+  "preferNameDirectory": true,
+  "symbols": {
+    "IncludeTimerTrigger": {
+      "type": "parameter",
+      "datatype": "bool",
+      "defaultValue": "false",
+      "description": "Add a sample timer-triggered function (and the Timer extension package)."
+    },
+    "TimerSchedule": {
+      "type": "parameter",
+      "datatype": "string",
+      "defaultValue": "0 */5 * * * *",
+      "replaces": "0 */5 * * * *",
+      "description": "NCRONTAB schedule for the timer trigger (only used with --timer)."
+    }
+  },
+  "sources": [
+    {
+      "rename": {
+        "local.settings.template.json": "local.settings.json"
+      },
+      "modifiers": [
+        {
+          "condition": "(!IncludeTimerTrigger)",
+          "exclude": [ "Functions/TimerFunction.cs" ]
+        }
+      ]
+    }
+  ],
+  "primaryOutputs": [
+    { "path": "Contoso.FunctionApp.csproj" }
+  ],
+  "postActions": [
+    {
+      "id": "restore",
+      "description": "Restore NuGet packages required by this project.",
+      "manualInstructions": [ { "text": "Run 'dotnet restore'" } ],
+      "actionId": "210D431B-A78B-4D2F-B762-4ED3E3EA9025",
+      "continueOnError": true
+    }
+  ]
+}
