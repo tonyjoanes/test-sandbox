@@ -1,0 +1,106 @@
+# Shared build template for every API. It builds, tests and publishes ONE immutable, versioned
+# Universal Package to the Azure Artifacts feed. It does not deploy anywhere.
+#
+# The package version is the pipeline's build number, which each API's azure-pipelines.yml sets
+# with `name: <major>.<minor>.$(Rev:r)`. The package contains:
+#   app.zip             - the `dotnet publish` output, ready for App Service zip deploy
+#   release-rules.yaml  - this version's deployment dependencies (read by the release pipeline)
+#   build-info.json     - the commit, branch and build that produced it
+#
+# Only builds of main are published. PR builds still compile and test, but they never produce a
+# package, so nothing that skipped review can end up in a release manifest.
+
+parameters:
+  - name: api
+    type: string
+  - name: project
+    type: string
+  - name: testProjects
+    type: string
+    default: ''
+  - name: feed
+    type: string
+    default: Platform/api-releases
+  - name: dotnetVersion
+    type: string
+    default: 8.x
+
+stages:
+  - stage: build
+    displayName: Build ${{ parameters.api }} $(Build.BuildNumber)
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: build
+        variables:
+          version: $(Build.BuildNumber)
+        steps:
+          - checkout: self
+            persistCredentials: true  # lets the tag step below push
+
+          - task: UseDotNet@2
+            inputs:
+              version: ${{ parameters.dotnetVersion }}
+
+          - ${{ if ne(parameters.testProjects, '') }}:
+            - task: DotNetCoreCLI@2
+              displayName: Test
+              inputs:
+                command: test
+                projects: ${{ parameters.testProjects }}
+
+          - task: DotNetCoreCLI@2
+            displayName: Publish $(version)
+            inputs:
+              command: publish
+              publishWebProjects: false
+              projects: ${{ parameters.project }}
+              arguments: -c Release -o $(Build.ArtifactStagingDirectory)/publish -p:Version=$(version)
+              zipAfterPublish: false
+              modifyOutputPath: false
+
+          - task: ArchiveFiles@2
+            displayName: Zip app
+            inputs:
+              rootFolderOrFile: $(Build.ArtifactStagingDirectory)/publish
+              includeRootFolder: false
+              archiveType: zip
+              archiveFile: $(Build.ArtifactStagingDirectory)/package/app.zip
+
+          - bash: |
+              set -euo pipefail
+              projectDir="$(dirname '${{ parameters.project }}')"
+              cp "$projectDir/release-rules.yaml" "$(Build.ArtifactStagingDirectory)/package/"
+              cat > "$(Build.ArtifactStagingDirectory)/package/build-info.json" <<EOF
+              {
+                "api": "${{ parameters.api }}",
+                "version": "$(version)",
+                "commit": "$(Build.SourceVersion)",
+                "branch": "$(Build.SourceBranch)",
+                "buildId": "$(Build.BuildId)",
+                "buildUrl": "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+              }
+              EOF
+            displayName: Add release rules and build info
+
+          - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+            - task: UniversalPackages@0
+              displayName: Publish ${{ parameters.api }} $(version) to ${{ parameters.feed }}
+              inputs:
+                command: publish
+                publishDirectory: $(Build.ArtifactStagingDirectory)/package
+                feedsToUsePublish: internal
+                vstsFeedPublish: ${{ parameters.feed }}
+                vstsFeedPackagePublish: ${{ parameters.api }}
+                versionOption: custom
+                versionPublish: $(version)
+                packagePublishDescription: ${{ parameters.api }} $(version) from $(Build.SourceVersion)
+
+            # Tag the commit so every package version leads straight back to its source. Needs
+            # "Contribute" and "Create tag" on the repo for the project's build service identity.
+            - bash: |
+                set -euo pipefail
+                tag="${{ parameters.api }}/v$(version)"
+                git tag -a "$tag" -m "${{ parameters.api }} $(version) (build $(Build.BuildId))"
+                git push origin "$tag"
+              displayName: Tag commit ${{ parameters.api }}/v$(version)

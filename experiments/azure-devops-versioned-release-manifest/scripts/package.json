@@ -1,0 +1,13 @@
+{
+  "name": "release-manifest-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Validates release manifests against each API's packaged release rules.",
+  "scripts": {
+    "validate": "node validate-manifest.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0"
+  }
+}

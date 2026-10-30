@@ -1,0 +1,3 @@
+# Release rules for catalog-api. See ../identity-api/release-rules.yaml for how these are used.
+api: catalog-api
+deployAfter: []

@@ -1,0 +1,214 @@
+# The release template. A release manifest (see ../../releases/release.yml) `extends` this
+# template and passes in the versions and the ordered steps. Everything the release does
+# comes from the manifest. Nothing here is tied to a branch.
+#
+# Stage layout:
+#
+#   validate ──► deploy_test ──► deploy_staging ──► deploy_prod ──► record
+#
+#   validate  Downloads every package at its manifest version (which proves each one exists)
+#             and runs scripts/validate-manifest.mjs against the release rules INSIDE those
+#             packages. It then publishes the packages as a pipeline artifact, so every later
+#             stage deploys exactly the files that were validated. On a pull request, this is
+#             the only stage that runs.
+#
+#   deploy_*  One stage per environment. Inside each one, every manifest step becomes a job, and
+#             the step's `dependsOn` becomes the job's `dependsOn`. So the order in the manifest
+#             IS the order Azure DevOps runs things in, and steps with nothing between them run
+#             in parallel. Approvals and exclusive locks are checks on the Azure DevOps
+#             environment (apis-<env>), so they can't be edited away in this file.
+#
+#   record    Tags the commit `release/<name>`. "What went out on the 4th?" is then
+#             `git show release/2026.11.04:<manifest path>`.
+#
+# Template expressions (${{ }}) are expanded when the run is queued, which is why the manifest
+# can generate stages and jobs. It's also why the manifest has to be a pipeline file and not a
+# data file that a script reads at run time.
+
+parameters:
+  # Release name, e.g. 2026.11.04. Must be unique: the validate stage refuses a name that has
+  # already been tagged.
+  - name: release
+    type: string
+
+  # The ordered steps. Each one is either:
+  #   - id: deploy_payments          # job name: letters, digits and _ only
+  #     deploy: payments-api         # package name in the feed
+  #     version: 2.3.1
+  #     dependsOn: [some_step_id]    # optional
+  # or:
+  #   - id: run_backfill
+  #     manual: Run the billing backfill
+  #     instructions: |
+  #       What the person has to do, and how they know it worked.
+  #     environments: [prod]         # optional. Leave it out to pause in every environment
+  #     dependsOn: [some_step_id]
+  # scripts/validate-manifest.mjs enforces the full rules. The pipeline only types this as an
+  # object.
+  - name: steps
+    type: object
+
+  # Where the manifest lives, so the validate stage can check the same file that was compiled.
+  - name: manifestPath
+    type: string
+    default: experiments/azure-devops-versioned-release-manifest/releases/release.yml
+
+  # Where validate-manifest.mjs lives.
+  - name: toolsPath
+    type: string
+    default: experiments/azure-devops-versioned-release-manifest/scripts
+
+  - name: feed
+    type: string
+    default: Platform/api-releases
+
+  # Who gets notified about, and can approve, manual steps.
+  - name: manualStepApprovers
+    type: string
+    default: '[Platform]\Release Managers'
+
+  # The environments a release is promoted through, in order. validate-manifest.mjs reads this
+  # default too, so the environment names a manual step can list are always the real ones.
+  - name: environments
+    type: object
+    default:
+      - name: test
+        adoEnvironment: apis-test
+        serviceConnection: sc-apis-test
+        resourceGroup: rg-apis-test
+        appNameFormat: 'app-{0}-test'
+      - name: staging
+        adoEnvironment: apis-staging
+        serviceConnection: sc-apis-staging
+        resourceGroup: rg-apis-staging
+        appNameFormat: 'app-{0}-staging'
+      - name: prod
+        adoEnvironment: apis-prod
+        serviceConnection: sc-apis-prod
+        resourceGroup: rg-apis-prod
+        appNameFormat: 'app-{0}-prod'
+
+stages:
+  - stage: validate
+    displayName: Validate release ${{ parameters.release }}
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: validate
+        steps:
+          - checkout: self
+            persistCredentials: true
+
+          - bash: |
+              set -euo pipefail
+              if git ls-remote --exit-code --tags origin "refs/tags/release/${{ parameters.release }}" >/dev/null; then
+                echo "##vso[task.logissue type=error]Release ${{ parameters.release }} has already been tagged. Give this release a new name."
+                exit 1
+              fi
+            displayName: Check release name is unused
+
+          - ${{ each step in parameters.steps }}:
+            - ${{ if step.deploy }}:
+              - task: UniversalPackages@0
+                displayName: Download ${{ step.deploy }} ${{ step.version }}
+                inputs:
+                  command: download
+                  downloadDirectory: $(Pipeline.Workspace)/packages/${{ step.deploy }}
+                  feedsToUse: internal
+                  vstsFeed: ${{ parameters.feed }}
+                  vstsFeedPackage: ${{ step.deploy }}
+                  vstsPackageVersion: ${{ step.version }}
+
+          - bash: |
+              set -euo pipefail
+              npm ci --silent
+              node validate-manifest.mjs \
+                --manifest "$(Build.SourcesDirectory)/${{ parameters.manifestPath }}" \
+                --rules-dir "$(Pipeline.Workspace)/packages" \
+                --summary "$(Pipeline.Workspace)/release-summary.md"
+            workingDirectory: $(Build.SourcesDirectory)/${{ parameters.toolsPath }}
+            displayName: Validate manifest against packaged release rules
+
+          # Adds a "Release" tab to the run showing the versions, the order and the manual steps.
+          - bash: echo "##vso[task.uploadsummary]$(Pipeline.Workspace)/release-summary.md"
+            displayName: Attach release summary
+
+          - publish: $(Pipeline.Workspace)/packages
+            artifact: packages
+            displayName: Publish validated packages
+
+  - ${{ each env in parameters.environments }}:
+    - stage: deploy_${{ env.name }}
+      displayName: Deploy to ${{ env.name }}
+      # Stages depend on the stage before them by default, so this runs in environment order.
+      condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+      jobs:
+        - ${{ each step in parameters.steps }}:
+
+          - ${{ if step.deploy }}:
+            - deployment: ${{ step.id }}
+              displayName: ${{ step.deploy }} ${{ step.version }}
+              ${{ if step.dependsOn }}:
+                dependsOn: ${{ step.dependsOn }}
+              environment: ${{ env.adoEnvironment }}
+              pool:
+                vmImage: ubuntu-latest
+              strategy:
+                runOnce:
+                  deploy:
+                    steps:
+                      - template: deploy-api-steps.yml
+                        parameters:
+                          api: ${{ step.deploy }}
+                          version: ${{ step.version }}
+                          appName: ${{ format(env.appNameFormat, step.deploy) }}
+                          resourceGroup: ${{ env.resourceGroup }}
+                          serviceConnection: ${{ env.serviceConnection }}
+
+          - ${{ if step.manual }}:
+            - job: ${{ step.id }}
+              displayName: 'Manual: ${{ step.manual }}'
+              ${{ if step.dependsOn }}:
+                dependsOn: ${{ step.dependsOn }}
+              pool: server
+              timeoutInMinutes: 4320  # must be longer than the task's own timeout below
+              steps:
+                - ${{ if or(not(step.environments), containsValue(step.environments, env.name)) }}:
+                  - task: ManualValidation@1
+                    displayName: 'Waiting for: ${{ step.manual }}'
+                    timeoutInMinutes: 1440
+                    inputs:
+                      notifyUsers: ${{ parameters.manualStepApprovers }}
+                      approvers: ${{ parameters.manualStepApprovers }}
+                      onTimeout: reject
+                      instructions: |
+                        Release ${{ parameters.release }} is paused in ${{ env.name }}.
+
+                        ${{ step.instructions }}
+
+                        Resume when this is done. Reject to stop the release here.
+                # Steps not needed in this environment still exist as an instant no-op job. That
+                # keeps the dependency chain the same in every environment, and the run shows it
+                # was skipped on purpose.
+                - ${{ else }}:
+                  - task: Delay@1
+                    displayName: Not needed in ${{ env.name }}
+                    inputs:
+                      delayForMinutes: '0'
+
+  - stage: record
+    displayName: Record release ${{ parameters.release }}
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    pool:
+      vmImage: ubuntu-latest
+    jobs:
+      - job: tag
+        steps:
+          - checkout: self
+            persistCredentials: true
+          - bash: |
+              set -euo pipefail
+              tag="release/${{ parameters.release }}"
+              git tag -a "$tag" -m "Release ${{ parameters.release }} (run $(Build.BuildId))"
+              git push origin "$tag"
+            displayName: Tag release/${{ parameters.release }}

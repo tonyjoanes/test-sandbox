@@ -1,0 +1,9 @@
+# Release rules for orders-api. See ../identity-api/release-rules.yaml for how these are used.
+api: orders-api
+deployAfter:
+  - api: catalog-api
+    minVersion: 3.0.0
+    reason: Uses the v3 product contract (prices in minor units).
+  - api: payments-api
+    minVersion: 2.3.0
+    reason: Checkout calls the new POST /payments/intents endpoint from payments-api 2.3.0.
