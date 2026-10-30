@@ -1,0 +1,14 @@
+# Broken on purpose: orders-api appears twice, so which version goes out depends on which job finishes last.
+#
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/api-listed-twice.yml
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+    steps:
+      - { id: deploy_identity,  deploy: identity-api,  version: 1.5.2 }
+      - { id: deploy_catalog,   deploy: catalog-api,   version: 3.0.4 }
+      - { id: deploy_customers, deploy: customers-api, version: 1.2.0, dependsOn: [deploy_identity] }
+      - { id: deploy_payments,  deploy: payments-api,  version: 2.3.1, dependsOn: [deploy_customers] }
+      - { id: deploy_orders,    deploy: orders-api,    version: 1.8.0, dependsOn: [deploy_catalog, deploy_payments] }
+      - { id: deploy_orders_again, deploy: orders-api, version: 1.8.1, dependsOn: [deploy_orders] }

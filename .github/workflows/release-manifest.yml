@@ -26,11 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-dotnet@v4
         with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: experiments/azure-devops-versioned-release-manifest/scripts/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run validate -- --summary "$GITHUB_STEP_SUMMARY"
+          dotnet-version: '10.0.x'
+      - run: dotnet run run-tests.cs
+      - run: dotnet run validate-manifest.cs -- --summary "$GITHUB_STEP_SUMMARY"

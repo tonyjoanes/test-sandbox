@@ -43,7 +43,7 @@ remember them.
 | `releases/release.yml` | **The release manifest.** |
 | `pipelines/templates/release.yml` | The release template that the manifest extends. It turns the manifest into stages and jobs. |
 | `pipelines/templates/deploy-api-steps.yml` | Deploys one API: live version check, deploy to staging slot, wait, swap, verify. |
-| `scripts/` | The manifest validator and its tests. |
+| `scripts/` | The manifest validator (`validate-manifest.cs`), its tests (`run-tests.cs`), and one sample manifest per rule (`test/fixtures/`). |
 
 ---
 
@@ -247,19 +247,25 @@ every other release, just a one-line diff.
 
 ## Try It
 
-The validator runs locally with no Azure access:
+The validator is a single C# file, run as a
+[.NET 10 file-based app](https://learn.microsoft.com/en-us/dotnet/core/sdk/file-based-apps).
+There's no project file. Its one NuGet package (YamlDotNet) is declared at the top with
+`#:package`. It runs locally with no Azure access. All you need is the .NET 10 SDK:
 
 ```bash
 cd experiments/azure-devops-versioned-release-manifest/scripts
-npm ci
 
-npm run validate      # the real manifest: prints the order it will run in
-npm test              # 15 tests covering every rule above
+dotnet run validate-manifest.cs     # the real manifest: prints the order it will run in
+dotnet run run-tests.cs             # 16 tests covering every rule above
 
 # The two headline failures, as a reviewer would see them on the PR:
-node validate-manifest.mjs --manifest test/fixtures/payments-before-customers.yml
-node validate-manifest.mjs --manifest test/fixtures/customers-too-old.yml
+dotnet run validate-manifest.cs -- --manifest test/fixtures/payments-before-customers.yml
+dotnet run validate-manifest.cs -- --manifest test/fixtures/customers-too-old.yml
 ```
+
+Each file in `test/fixtures/` is a sample manifest that breaks exactly one rule, and its header
+comment says which. Read together, they're a list of every mistake the validator catches.
+`run-tests.cs` runs the validator against each one and checks the error it gives.
 
 ```
 ✓ .../releases/release.yml is valid

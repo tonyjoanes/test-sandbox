@@ -14,7 +14,7 @@
 #     before it, and at what minimum version. The validate stage fails the release if this file
 #     breaks any of those rules.
 #
-# Check it locally:  cd ../scripts && npm ci && npm run validate
+# Check it locally:  cd ../scripts && dotnet run validate-manifest.cs
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 trigger:

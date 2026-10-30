@@ -1,7 +1,7 @@
 # Broken on purpose: the order is right, but customers-api is pinned to a version from before
 # the endpoint payments-api 2.3.1 relies on. Ordering alone wouldn't save this release.
 #
-#   node validate-manifest.mjs --manifest test/fixtures/customers-too-old.yml
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/customers-too-old.yml
 extends:
   template: ../../../pipelines/templates/release.yml
   parameters:

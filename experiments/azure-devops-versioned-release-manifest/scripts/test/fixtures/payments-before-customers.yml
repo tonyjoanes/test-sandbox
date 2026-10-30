@@ -4,7 +4,7 @@
 # environment. The validator catches it because payments-api's packaged release rules say
 # "deployAfter customers-api".
 #
-#   node validate-manifest.mjs --manifest test/fixtures/payments-before-customers.yml
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/payments-before-customers.yml
 extends:
   template: ../../../pipelines/templates/release.yml
   parameters:

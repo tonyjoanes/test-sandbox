@@ -7,7 +7,7 @@
 #   validate ──► deploy_test ──► deploy_staging ──► deploy_prod ──► record
 #
 #   validate  Downloads every package at its manifest version (which proves each one exists)
-#             and runs scripts/validate-manifest.mjs against the release rules INSIDE those
+#             and runs scripts/validate-manifest.cs against the release rules INSIDE those
 #             packages. It then publishes the packages as a pipeline artifact, so every later
 #             stage deploys exactly the files that were validated. On a pull request, this is
 #             the only stage that runs.
@@ -43,7 +43,7 @@ parameters:
   #       What the person has to do, and how they know it worked.
   #     environments: [prod]         # optional. Leave it out to pause in every environment
   #     dependsOn: [some_step_id]
-  # scripts/validate-manifest.mjs enforces the full rules. The pipeline only types this as an
+  # scripts/validate-manifest.cs enforces the full rules. The pipeline only types this as an
   # object.
   - name: steps
     type: object
@@ -53,7 +53,7 @@ parameters:
     type: string
     default: experiments/azure-devops-versioned-release-manifest/releases/release.yml
 
-  # Where validate-manifest.mjs lives.
+  # Where validate-manifest.cs lives.
   - name: toolsPath
     type: string
     default: experiments/azure-devops-versioned-release-manifest/scripts
@@ -67,7 +67,7 @@ parameters:
     type: string
     default: '[Platform]\Release Managers'
 
-  # The environments a release is promoted through, in order. validate-manifest.mjs reads this
+  # The environments a release is promoted through, in order. validate-manifest.cs reads this
   # default too, so the environment names a manual step can list are always the real ones.
   - name: environments
     type: object
@@ -119,10 +119,14 @@ stages:
                   vstsFeedPackage: ${{ step.deploy }}
                   vstsPackageVersion: ${{ step.version }}
 
+          # validate-manifest.cs is a .NET 10 file-based app, so it needs the .NET 10 SDK.
+          - task: UseDotNet@2
+            inputs:
+              version: 10.x
+
           - bash: |
               set -euo pipefail
-              npm ci --silent
-              node validate-manifest.mjs \
+              dotnet run validate-manifest.cs -- \
                 --manifest "$(Build.SourcesDirectory)/${{ parameters.manifestPath }}" \
                 --rules-dir "$(Pipeline.Workspace)/packages" \
                 --summary "$(Pipeline.Workspace)/release-summary.md"
