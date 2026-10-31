@@ -13,9 +13,10 @@ The result: each release has a reviewed document that records exactly what went 
 document also enforces the "A must go before B" rules, rather than relying on people to
 remember them.
 
-> Like the rest of this repo, the pipelines here are reference material. There's no Azure
-> DevOps org behind this sandbox, so the YAML hasn't been run there. The **manifest validator is
-> real and tested**: see [Try It](#try-it).
+> There's no Azure DevOps org behind this sandbox, so no pipeline here has been queued for
+> real. Everything that can be tested without one is: the manifest rules, the template
+> expansion, the deploy scripts and the packaging. See
+> [Testing Without Azure DevOps](#testing-without-azure-devops).
 
 ---
 
@@ -43,7 +44,8 @@ remember them.
 | `releases/release.yml` | **The release manifest.** |
 | `pipelines/templates/release.yml` | The release template that the manifest extends. It turns the manifest into stages and jobs. |
 | `pipelines/templates/deploy-api-steps.yml` | Deploys one API: live version check, deploy to staging slot, wait, swap, verify. |
-| `scripts/` | The manifest validator (`validate-manifest.cs`), its tests (`run-tests.cs`), and one sample manifest per rule (`test/fixtures/`). |
+| `pipelines/scripts/` | The scripts those templates run: `assemble-package.sh` builds a package, and the deploy checks (`check-live-version.sh`, `wait-for-version.sh`, `verify-production.sh`). |
+| `scripts/` | The manifest validator (`validate-manifest.cs`) and the four test files. See [Testing Without Azure DevOps](#testing-without-azure-devops). |
 
 ---
 
@@ -245,44 +247,85 @@ every other release, just a one-line diff.
 
 ---
 
-## Try It
+## Testing Without Azure DevOps
 
-The validator is a single C# file, run as a
-[.NET 10 file-based app](https://learn.microsoft.com/en-us/dotnet/core/sdk/file-based-apps).
-There's no project file. Its one NuGet package (YamlDotNet) is declared at the top with
-`#:package`. It runs locally with no Azure access. All you need is the .NET 10 SDK:
+Everything runs locally with only the
+[.NET 10 SDK](https://learn.microsoft.com/en-us/dotnet/core/sdk/file-based-apps). The validator
+and the tests are single C# files run with `dotnet run`. There are no project files, and the
+NuGet packages are declared at the top of each file with `#:package`.
 
 ```bash
 cd experiments/azure-devops-versioned-release-manifest/scripts
 
-dotnet run validate-manifest.cs     # the real manifest: prints the order it will run in
-dotnet run run-tests.cs             # 16 tests covering every rule above
+dotnet run validate-manifest.cs        # check the real manifest and print the order it runs in
+dotnet run test-manifest.cs            # ~10s
+dotnet run test-template-expansion.cs  # ~1 min (installs Runner.Server into scripts/.tools the first time)
+dotnet run test-deploy-scripts.cs      # ~40s
+dotnet run test-packaging.cs           # ~40s
+```
 
-# The two headline failures, as a reviewer would see them on the PR:
+| Test | What's real | What's faked | What it proves |
+|---|---|---|---|
+| `test-manifest.cs` (16) | The validator | Nothing | Every manifest rule, using one sample manifest per mistake in `test/fixtures/`. |
+| `test-template-expansion.cs` (20) | The templates, expanded by [Runner.Server](https://github.com/ChristopherHX/runner.server) | Azure DevOps itself | The manifest becomes the right stages and jobs, described below. |
+| `test-deploy-scripts.cs` (9) | The deploy scripts, and orders-api running on localhost | `az` | Skip-if-live, wait-for-slot and verify-after-swap all behave correctly, including the failure cases. |
+| `test-packaging.cs` (19) | `assemble-package.sh`, the five APIs, the validator | The Artifacts feed (a temp folder) | Packages contain the right files and really run, and release rules are checked per version. |
+
+[`.github/workflows/release-manifest.yml`](../../.github/workflows/release-manifest.yml) runs
+all four, plus the validator, on every change to this experiment.
+
+**The manifest rules.** Each file in `test/fixtures/` is a sample manifest that breaks exactly
+one rule, and its header comment says which. Together they list every mistake the validator
+catches. The two headline ones:
+
+```bash
 dotnet run validate-manifest.cs -- --manifest test/fixtures/payments-before-customers.yml
 dotnet run validate-manifest.cs -- --manifest test/fixtures/customers-too-old.yml
 ```
 
-Each file in `test/fixtures/` is a sample manifest that breaks exactly one rule, and its header
-comment says which. Read together, they're a list of every mistake the validator catches.
-`run-tests.cs` runs the validator against each one and checks the error it gives.
+**The template expansion.** This is where an Azure DevOps mistake would hide, such as a
+`${{ if }}` that's subtly wrong or a `dependsOn` that never gets copied across. Runner.Server
+expands the manifest the way Azure DevOps does at queue time. The test then checks the result
+against the manifest:
 
-```
-✓ .../releases/release.yml is valid
+- the stages run validate, test, staging, prod, then record
+- every environment has one job per step, with `dependsOn` copied across
+- each deploy gets that environment's app name, resource group and service connection
+- each pause is a Manual Validation where it's listed, and a no-op elsewhere
+- validate downloads each package at its manifest version
+- PRs only run validate
 
-Release 2026.11.04: test → staging → prod
-  1. deploy identity-api 1.5.2  |  deploy catalog-api 3.0.4
-  2. deploy customers-api 1.2.0
-  3. PAUSE: Run the billing-profile backfill (staging, prod)
-  4. deploy payments-api 2.3.1
-  5. deploy orders-api 1.8.0
-  6. PAUSE: Smoke test the checkout journey (prod)
-```
+As a check on the test itself: removing `dependsOn` from manual steps in the template makes six
+checks fail, each naming the missing dependency, for example
+`backfill_billing_profiles dependsOn: got "", expected "deploy_customers"`. **Caveat:**
+Runner.Server is an unofficial emulator, so a pass is strong evidence, not proof. The proof
+is Azure DevOps' own Preview API, which the
+[template validation experiment](../azure-pipeline-template-validation) uses.
 
-Locally, `--rules-dir` defaults to `../apis` (the rules on this branch). The release pipeline
-points it at the downloaded packages instead. In this sandbox,
-[`.github/workflows/release-manifest.yml`](../../.github/workflows/release-manifest.yml) runs
-the tests and validation on every change.
+**The deploy scripts.** The live-version check, the wait for the slot, and the check after the
+swap are scripts in `pipelines/scripts/`, not inline bash. That way the test can run them for
+real. It starts orders-api twice: production at 1.8.0 and the staging slot at 1.8.1. A fake
+`az` answers `az webapp show` with their local addresses. The tests cover:
+
+- an API already at the target version is skipped
+- an unreachable app is deployed anyway, not skipped
+- a failing `az` fails the job
+- the wait keeps polling while the slot restarts
+- the wait gives up with "Production is untouched"
+- a wrong version after the swap fails, printing the swap-back command
+
+**The packaging.** The test builds all five packages with `assemble-package.sh`, the same
+script the build pipeline runs, at the manifest's versions. It checks each package holds
+exactly `app.zip`, `release-rules.yaml` and `build-info.json`. It then unzips and runs each
+app, and checks it reports its package version on `/version`. Then it builds a payments-api
+2.4.0 whose rules no longer need customers-api 1.2.0.
+[That release](scripts/test/packaging/payments-drops-dependency.yml) passes against the packages
+but fails against the repo's current rules. That proves the release pipeline checks each
+version's own rules.
+
+**What still needs Azure DevOps and Azure:** approvals and exclusive locks on environments,
+publishing to and downloading from the feed, service connections, Manual Validation
+notifications, and real slot swaps.
 
 ---
 
@@ -317,10 +360,12 @@ as `template: build-api.yml@templates`.
 
 ## Known Gaps / Next Steps
 
-- **Not run against a real Azure DevOps org.** The validator is tested. The YAML follows
-  documented task inputs and template syntax but hasn't been through a real queue. The
+- **Not run against a real Azure DevOps org.** Template expansion is tested with an emulator,
+  and the scripts the pipelines run are tested for real. But no pipeline has been queued, and
+  task inputs (such as `AzureWebApp@1`'s) are only checked against the docs. The
   [Pipelines Preview API approach](../azure-pipeline-template-validation) elsewhere in this
-  repo is how to check that template expansion succeeds without running anything.
+  repo is the next step: it expands the pipelines in Azure DevOps itself, without running
+  anything.
 - **One manifest file, overwritten per release.** Release history lives in the git history and
   the `release/*` tags, not in a folder of files. A file per release would need either a
   pipeline registered per release, or a dynamic `extends` path. Azure DevOps doesn't clearly
