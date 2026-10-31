@@ -1,0 +1,14 @@
+# VALID on purpose: catalog-api 10.0.0 satisfies orders-api's "catalog-api >= 3.0.0" rule.
+# Checks versions are compared as numbers (10 > 3), not as text ("10" < "3").
+#
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/catalog-major-10.yml
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+    steps:
+      - { id: deploy_identity,  deploy: identity-api,  version: 1.5.2 }
+      - { id: deploy_catalog,   deploy: catalog-api,   version: 10.0.0 }
+      - { id: deploy_customers, deploy: customers-api, version: 1.2.0, dependsOn: [deploy_identity] }
+      - { id: deploy_payments,  deploy: payments-api,  version: 2.3.1, dependsOn: [deploy_customers] }
+      - { id: deploy_orders,    deploy: orders-api,    version: 1.8.0, dependsOn: [deploy_catalog, deploy_payments] }

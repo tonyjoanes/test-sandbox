@@ -1,0 +1,106 @@
+# Deploys one API package to one App Service, using zero-downtime slot swaps:
+#
+#   live version check ─► deploy to staging slot ─► wait for slot /version ─► swap ─► verify live
+#
+# If live already reports the manifest's version, every step after the check is skipped. That's
+# why a manifest can list all five APIs every time: unchanged ones cost a single HTTP call.
+
+parameters:
+  - name: api
+    type: string
+  - name: version
+    type: string
+  - name: appName
+    type: string
+  - name: resourceGroup
+    type: string
+  - name: serviceConnection
+    type: string
+  - name: slot
+    type: string
+    default: staging
+  - name: appType
+    type: string
+    default: webAppLinux  # webApp for Windows App Service plans
+
+steps:
+  # Only this API's package, taken from the artifact the validate stage checked. Adding an
+  # explicit download step also turns off the deployment job's default "download everything".
+  - download: current
+    artifact: packages
+    patterns: ${{ parameters.api }}/**
+
+  - task: AzureCLI@2
+    displayName: Live version check
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        host=$(az webapp show -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --query defaultHostName -o tsv)
+        live=$(curl -fsS --max-time 10 "https://$host/version" | jq -r .version) || live="unknown"
+        echo "${{ parameters.appName }} is running $live. This release wants ${{ parameters.version }}."
+        if [ "$live" = "${{ parameters.version }}" ]; then
+          echo "Already at ${{ parameters.version }}, so nothing to deploy."
+          echo "##vso[task.setvariable variable=upToDate]true"
+        fi
+
+  - task: AzureWebApp@1
+    displayName: Deploy ${{ parameters.version }} to '${{ parameters.slot }}' slot
+    condition: and(succeeded(), ne(variables.upToDate, 'true'))
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      appType: ${{ parameters.appType }}
+      appName: ${{ parameters.appName }}
+      deployToSlotOrASE: true
+      resourceGroupName: ${{ parameters.resourceGroup }}
+      slotName: ${{ parameters.slot }}
+      package: $(Pipeline.Workspace)/packages/${{ parameters.api }}/app.zip
+
+  - task: AzureCLI@2
+    displayName: Wait for '${{ parameters.slot }}' slot to report ${{ parameters.version }}
+    condition: and(succeeded(), ne(variables.upToDate, 'true'))
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        host=$(az webapp show -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --slot '${{ parameters.slot }}' --query defaultHostName -o tsv)
+        for attempt in $(seq 1 30); do
+          got=$(curl -fsS --max-time 10 "https://$host/version" | jq -r .version) || got="unreachable"
+          [ "$got" = "${{ parameters.version }}" ] && { echo "Slot is serving $got"; exit 0; }
+          echo "Attempt $attempt: slot reports $got, waiting..."
+          sleep 10
+        done
+        echo "##vso[task.logissue type=error]Slot never reported ${{ parameters.version }}. Production is untouched."
+        exit 1
+
+  - task: AzureAppServiceManage@0
+    displayName: Swap '${{ parameters.slot }}' into production
+    condition: and(succeeded(), ne(variables.upToDate, 'true'))
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      Action: Swap Slots
+      WebAppName: ${{ parameters.appName }}
+      ResourceGroupName: ${{ parameters.resourceGroup }}
+      SourceSlot: ${{ parameters.slot }}
+      SwapWithProduction: true
+
+  - task: AzureCLI@2
+    displayName: Verify production reports ${{ parameters.version }}
+    condition: and(succeeded(), ne(variables.upToDate, 'true'))
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        host=$(az webapp show -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --query defaultHostName -o tsv)
+        got=$(curl -fsS --max-time 10 "https://$host/version" | jq -r .version) || got="unreachable"
+        if [ "$got" != "${{ parameters.version }}" ]; then
+          echo "##vso[task.logissue type=error]Production reports $got after the swap, expected ${{ parameters.version }}. Swap back with: az webapp deployment slot swap -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --slot '${{ parameters.slot }}'"
+          exit 1
+        fi
+        echo "Production is serving ${{ parameters.api }} $got"

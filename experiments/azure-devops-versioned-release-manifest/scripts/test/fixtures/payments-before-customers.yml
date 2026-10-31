@@ -1,0 +1,17 @@
+# Broken on purpose: the "API B before API A" mistake. Someone removed the backfill step and
+# left deploy_payments with no dependsOn. Azure DevOps would happily run payments-api in
+# wave 1, in parallel with identity-api, before customers-api 1.2.0 exists in that
+# environment. The validator catches it because payments-api's packaged release rules say
+# "deployAfter customers-api".
+#
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/payments-before-customers.yml
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+    steps:
+      - { id: deploy_identity,  deploy: identity-api,  version: 1.5.2 }
+      - { id: deploy_catalog,   deploy: catalog-api,   version: 3.0.4 }
+      - { id: deploy_customers, deploy: customers-api, version: 1.2.0, dependsOn: [deploy_identity] }
+      - { id: deploy_payments,  deploy: payments-api,  version: 2.3.1 }
+      - { id: deploy_orders,    deploy: orders-api,    version: 1.8.0, dependsOn: [deploy_catalog, deploy_payments] }

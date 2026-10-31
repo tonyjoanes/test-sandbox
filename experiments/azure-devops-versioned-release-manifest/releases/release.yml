@@ -1,0 +1,81 @@
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# RELEASE MANIFEST
+#
+# This file is the release. To ship something, raise a PR that changes it. The PR's build
+# validation runs the checks below. Merging the PR starts the release, and each environment
+# then waits for its own approvals.
+#
+#   - Every API is listed with an exact package version, every time. That gives a complete
+#     picture of what live looks like after this release. APIs that are already at that version
+#     are detected at deploy time and skipped.
+#   - `dependsOn` sets the order. Steps with nothing between them run in parallel.
+#   - `manual` steps pause the pipeline and show `instructions` to an approver.
+#   - Each API's release-rules.yaml (shipped inside its package) declares what must be deployed
+#     before it, and at what minimum version. The validate stage fails the release if this file
+#     breaks any of those rules.
+#
+# Check it locally:  cd ../scripts && dotnet run validate-manifest.cs
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [experiments/azure-devops-versioned-release-manifest/releases/release.yml]
+
+pr: none  # Azure Repos ignores this. PR validation is a branch policy (see README)
+
+extends:
+  template: ../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+
+    steps:
+      # Wave 1: no dependencies, so these two run in parallel.
+      - id: deploy_identity
+        deploy: identity-api
+        version: 1.5.2
+
+      - id: deploy_catalog
+        deploy: catalog-api
+        version: 3.0.4
+
+      # customers-api 1.2.0 reads a token claim that only identity-api >= 1.5.0 issues.
+      - id: deploy_customers
+        deploy: customers-api
+        version: 1.2.0
+        dependsOn: [deploy_identity]
+
+      # A pause for something the pipeline can't do itself.
+      - id: backfill_billing_profiles
+        manual: Run the billing-profile backfill
+        environments: [staging, prod]
+        dependsOn: [deploy_customers]
+        instructions: |
+          customers-api 1.2.0 is live but existing customers have no billing profile yet.
+          1. Run the "customers-billing-backfill" WebJob on the customers-api App Service.
+          2. Wait for it to log "Backfill complete".
+          3. Check the "Customers without billing profile" tile on the ops dashboard reads 0.
+          payments-api is deployed next and will fail checkout for any customer still missing one.
+
+      # payments-api needs customers-api >= 1.2.0. Depending on the backfill also means it
+      # comes after customers, because the backfill depends on deploy_customers.
+      - id: deploy_payments
+        deploy: payments-api
+        version: 2.3.1
+        dependsOn: [backfill_billing_profiles]
+
+      - id: deploy_orders
+        deploy: orders-api
+        version: 1.8.0
+        dependsOn: [deploy_catalog, deploy_payments]
+
+      - id: checkout_smoke_test
+        manual: Smoke test the checkout journey
+        environments: [prod]
+        dependsOn: [deploy_orders]
+        instructions: |
+          Place a test order with the "release-check" account and the test card.
+          Confirm it shows in the orders dashboard with status Paid.
+          If it fails, reject. Every API stays on its new version, so roll back by raising a
+          release with the previous manifest's versions.

@@ -1,0 +1,6 @@
+# Release rules for customers-api. See ../identity-api/release-rules.yaml for how these are used.
+api: customers-api
+deployAfter:
+  - api: identity-api
+    minVersion: 1.5.0
+    reason: Reads the "customer_tier" token claim that identity-api started issuing in 1.5.0.

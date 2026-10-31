@@ -1,0 +1,12 @@
+# Broken on purpose: orders-api isn't listed. A manifest describes all of live, so every API is listed every time.
+#
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/orders-missing.yml
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+    steps:
+      - { id: deploy_identity,  deploy: identity-api,  version: 1.5.2 }
+      - { id: deploy_catalog,   deploy: catalog-api,   version: 3.0.4 }
+      - { id: deploy_customers, deploy: customers-api, version: 1.2.0, dependsOn: [deploy_identity] }
+      - { id: deploy_payments,  deploy: payments-api,  version: 2.3.1, dependsOn: [deploy_customers] }

@@ -1,0 +1,21 @@
+# Build pipeline for customers-api. It builds, tests and publishes a versioned package. It never deploys
+# to live. Getting a version into live is the release manifest's job (see ../../releases).
+#
+# Versioning: the build number IS the package version. $(Rev:r) counts up from 1 and resets
+# whenever the rest of the build number changes, so bumping the minor version below to a new
+# value starts the next patch numbers at .1 again.
+name: 1.2.$(Rev:r)
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [experiments/azure-devops-versioned-release-manifest/apis/customers-api/*]
+
+extends:
+  # In a real setup this template lives in a shared templates repo:
+  #   template: build-api.yml@templates
+  template: ../../pipelines/templates/build-api.yml
+  parameters:
+    api: customers-api
+    project: experiments/azure-devops-versioned-release-manifest/apis/customers-api/CustomersApi.csproj

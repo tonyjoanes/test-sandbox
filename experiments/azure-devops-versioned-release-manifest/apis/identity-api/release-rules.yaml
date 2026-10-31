@@ -1,0 +1,5 @@
+# Release rules for identity-api: what has to be live before this API can be deployed.
+# This file is versioned with the code and packaged with every build, so the rules that the
+# release pipeline checks are the ones belonging to the exact version being released.
+api: identity-api
+deployAfter: []

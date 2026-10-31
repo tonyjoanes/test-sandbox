@@ -1,0 +1,13 @@
+# Broken on purpose: a hyphen in a step id. Azure DevOps job names only allow letters, digits and _.
+#
+#   dotnet run validate-manifest.cs -- --manifest test/fixtures/bad-id.yml
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+    steps:
+      - { id: deploy_identity,  deploy: identity-api,  version: 1.5.2 }
+      - { id: deploy-catalog, deploy: catalog-api, version: 3.0.4 }
+      - { id: deploy_customers, deploy: customers-api, version: 1.2.0, dependsOn: [deploy_identity] }
+      - { id: deploy_payments,  deploy: payments-api,  version: 2.3.1, dependsOn: [deploy_customers] }
+      - { id: deploy_orders, deploy: orders-api, version: 1.8.0, dependsOn: [deploy-catalog, deploy_payments] }

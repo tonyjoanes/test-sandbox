@@ -1,0 +1,33 @@
+# Runs the release manifest checks from experiments/azure-devops-versioned-release-manifest/.
+# The experiment itself targets Azure DevOps (that's where its pipelines would run). This
+# workflow only exists so the validator and its tests run on every change in this GitHub sandbox.
+
+name: Release Manifest
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'experiments/azure-devops-versioned-release-manifest/**'
+      - '.github/workflows/release-manifest.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/azure-devops-versioned-release-manifest/**'
+      - '.github/workflows/release-manifest.yml'
+
+defaults:
+  run:
+    working-directory: experiments/azure-devops-versioned-release-manifest/scripts
+
+jobs:
+  validate:
+    name: Validate manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet run run-tests.cs
+      - run: dotnet run validate-manifest.cs -- --summary "$GITHUB_STEP_SUMMARY"

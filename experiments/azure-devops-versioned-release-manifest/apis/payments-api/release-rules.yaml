@@ -1,0 +1,6 @@
+# Release rules for payments-api. See ../identity-api/release-rules.yaml for how these are used.
+api: payments-api
+deployAfter:
+  - api: customers-api
+    minVersion: 1.2.0
+    reason: Calls GET /customers/{id}/billing-profile, which was added in customers-api 1.2.0.
