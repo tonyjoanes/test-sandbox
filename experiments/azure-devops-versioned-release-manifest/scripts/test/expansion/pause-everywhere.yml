@@ -1,0 +1,14 @@
+# Used by test-template-expansion.cs. A manual step with no `environments` should pause in every
+# environment. The real manifest's pauses are all limited to some environments, so it can't
+# show this.
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.04'
+    steps:
+      - { id: deploy_identity, deploy: identity-api, version: 1.5.2 }
+      - id: rotate_signing_key
+        manual: Rotate the token signing key
+        dependsOn: [deploy_identity]
+        instructions: Run "Rotate signing key" in the identity admin portal.
+      - { id: deploy_customers, deploy: customers-api, version: 1.2.0, dependsOn: [rotate_signing_key] }

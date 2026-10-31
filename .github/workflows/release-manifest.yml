@@ -1,6 +1,8 @@
 # Runs the release manifest checks from experiments/azure-devops-versioned-release-manifest/.
 # The experiment itself targets Azure DevOps (that's where its pipelines would run). This
 # workflow only exists so the validator and its tests run on every change in this GitHub sandbox.
+# None of them need Azure or Azure DevOps. See the experiment's README, "Testing Without Azure
+# DevOps".
 
 name: Release Manifest
 
@@ -29,5 +31,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - run: dotnet run run-tests.cs
-      - run: dotnet run validate-manifest.cs -- --summary "$GITHUB_STEP_SUMMARY"
+      - name: Validate the real manifest
+        run: dotnet run validate-manifest.cs -- --summary "$GITHUB_STEP_SUMMARY"
+      - name: Manifest rules
+        run: dotnet run test-manifest.cs
+      - name: Template expansion (Runner.Server)
+        run: dotnet run test-template-expansion.cs
+      - name: Deploy scripts (real API, fake az)
+        run: dotnet run test-deploy-scripts.cs
+      - name: Packaging (build to release validation)
+        run: dotnet run test-packaging.cs

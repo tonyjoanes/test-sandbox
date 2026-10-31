@@ -58,6 +58,11 @@ parameters:
     type: string
     default: experiments/azure-devops-versioned-release-manifest/scripts
 
+  # Where the deploy scripts live (check-live-version.sh and friends).
+  - name: deployScriptsPath
+    type: string
+    default: experiments/azure-devops-versioned-release-manifest/pipelines/scripts
+
   - name: feed
     type: string
     default: Platform/api-releases
@@ -140,6 +145,12 @@ stages:
           - publish: $(Pipeline.Workspace)/packages
             artifact: packages
             displayName: Publish validated packages
+
+          # The deploy checks (live version, wait for slot, verify after swap). Deployment jobs
+          # don't check out the repo, so they get the scripts from this artifact.
+          - publish: $(Build.SourcesDirectory)/${{ parameters.deployScriptsPath }}
+            artifact: release-scripts
+            displayName: Publish deploy scripts
 
   - ${{ each env in parameters.environments }}:
     - stage: deploy_${{ env.name }}

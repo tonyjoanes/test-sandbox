@@ -1,0 +1,5 @@
+# Used by test-template-expansion.cs. See broken-template.yml.
+extends:
+  template: broken-template.yml
+  parameters:
+    release: '2026.11.04'
