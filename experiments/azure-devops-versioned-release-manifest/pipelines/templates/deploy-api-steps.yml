@@ -4,6 +4,10 @@
 #
 # If live already reports the manifest's version, every step after the check is skipped. That's
 # why a manifest can list all five APIs every time: unchanged ones cost a single HTTP call.
+#
+# The checks are scripts in ../scripts, not inline bash, so scripts/test-deploy-scripts.cs can
+# run them locally against a real API. The validate stage publishes them as the
+# `release-scripts` artifact, since deployment jobs don't check out the repo.
 
 parameters:
   - name: api
@@ -24,11 +28,14 @@ parameters:
     default: webAppLinux  # webApp for Windows App Service plans
 
 steps:
-  # Only this API's package, taken from the artifact the validate stage checked. Adding an
-  # explicit download step also turns off the deployment job's default "download everything".
+  # Only this API's package, taken from the artifact the validate stage checked. Adding explicit
+  # download steps also turns off the deployment job's default "download everything".
   - download: current
     artifact: packages
     patterns: ${{ parameters.api }}/**
+
+  - download: current
+    artifact: release-scripts
 
   - task: AzureCLI@2
     displayName: Live version check
@@ -36,15 +43,9 @@ steps:
       azureSubscription: ${{ parameters.serviceConnection }}
       scriptType: bash
       scriptLocation: inlineScript
-      inlineScript: |
-        set -euo pipefail
-        host=$(az webapp show -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --query defaultHostName -o tsv)
-        live=$(curl -fsS --max-time 10 "https://$host/version" | jq -r .version) || live="unknown"
-        echo "${{ parameters.appName }} is running $live. This release wants ${{ parameters.version }}."
-        if [ "$live" = "${{ parameters.version }}" ]; then
-          echo "Already at ${{ parameters.version }}, so nothing to deploy."
-          echo "##vso[task.setvariable variable=upToDate]true"
-        fi
+      inlineScript: >
+        bash "$(Pipeline.Workspace)/release-scripts/check-live-version.sh"
+        '${{ parameters.resourceGroup }}' '${{ parameters.appName }}' '${{ parameters.version }}'
 
   - task: AzureWebApp@1
     displayName: Deploy ${{ parameters.version }} to '${{ parameters.slot }}' slot
@@ -65,17 +66,9 @@ steps:
       azureSubscription: ${{ parameters.serviceConnection }}
       scriptType: bash
       scriptLocation: inlineScript
-      inlineScript: |
-        set -euo pipefail
-        host=$(az webapp show -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --slot '${{ parameters.slot }}' --query defaultHostName -o tsv)
-        for attempt in $(seq 1 30); do
-          got=$(curl -fsS --max-time 10 "https://$host/version" | jq -r .version) || got="unreachable"
-          [ "$got" = "${{ parameters.version }}" ] && { echo "Slot is serving $got"; exit 0; }
-          echo "Attempt $attempt: slot reports $got, waiting..."
-          sleep 10
-        done
-        echo "##vso[task.logissue type=error]Slot never reported ${{ parameters.version }}. Production is untouched."
-        exit 1
+      inlineScript: >
+        bash "$(Pipeline.Workspace)/release-scripts/wait-for-version.sh"
+        '${{ parameters.resourceGroup }}' '${{ parameters.appName }}' '${{ parameters.version }}' '${{ parameters.slot }}'
 
   - task: AzureAppServiceManage@0
     displayName: Swap '${{ parameters.slot }}' into production
@@ -95,12 +88,6 @@ steps:
       azureSubscription: ${{ parameters.serviceConnection }}
       scriptType: bash
       scriptLocation: inlineScript
-      inlineScript: |
-        set -euo pipefail
-        host=$(az webapp show -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --query defaultHostName -o tsv)
-        got=$(curl -fsS --max-time 10 "https://$host/version" | jq -r .version) || got="unreachable"
-        if [ "$got" != "${{ parameters.version }}" ]; then
-          echo "##vso[task.logissue type=error]Production reports $got after the swap, expected ${{ parameters.version }}. Swap back with: az webapp deployment slot swap -g '${{ parameters.resourceGroup }}' -n '${{ parameters.appName }}' --slot '${{ parameters.slot }}'"
-          exit 1
-        fi
-        echo "Production is serving ${{ parameters.api }} $got"
+      inlineScript: >
+        bash "$(Pipeline.Workspace)/release-scripts/verify-production.sh"
+        '${{ parameters.resourceGroup }}' '${{ parameters.appName }}' '${{ parameters.version }}' '${{ parameters.slot }}'

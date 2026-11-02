@@ -1,0 +1,12 @@
+# Used by test-template-expansion.cs to prove that test notices a template that doesn't expand.
+# The format() call below is missing its closing bracket. Azure DevOps would reject this when
+# the run is queued.
+parameters:
+  - name: release
+    type: string
+stages:
+  - stage: validate
+    jobs:
+      - job: validate
+        steps:
+          - bash: echo ${{ format('{0}', parameters.release }}

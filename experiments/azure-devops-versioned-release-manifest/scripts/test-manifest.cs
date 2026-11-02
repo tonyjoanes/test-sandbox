@@ -1,5 +1,5 @@
 #!/usr/bin/env dotnet
-// Tests for validate-manifest.cs. Run with:  dotnet run run-tests.cs
+// Tests for validate-manifest.cs. Run with:  dotnet run test-manifest.cs
 //
 // These are black-box tests: each case runs the validator against one manifest, the real one or
 // a sample in test/fixtures/, and checks the exit code and the output. Each fixture breaks

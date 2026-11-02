@@ -1,0 +1,18 @@
+# Used by test-packaging.cs. Valid ONLY against the packages that test builds.
+#
+# The test builds a payments-api 2.4.0 package whose release rules no longer mention
+# customers-api: 2.4.0 stopped calling the billing-profile endpoint. So this release can ship
+# customers-api 1.1.4 and deploy payments-api without waiting for customers-api.
+# The repo's current payments-api rules still need customers-api >= 1.2.0, so the same manifest
+# fails against ../../../apis. That shows the release pipeline checks each version's own
+# packaged rules, not whatever is on main today.
+extends:
+  template: ../../../pipelines/templates/release.yml
+  parameters:
+    release: '2026.11.18'
+    steps:
+      - { id: deploy_identity,  deploy: identity-api,  version: 1.5.2 }
+      - { id: deploy_catalog,   deploy: catalog-api,   version: 3.0.4 }
+      - { id: deploy_customers, deploy: customers-api, version: 1.1.4, dependsOn: [deploy_identity] }
+      - { id: deploy_payments,  deploy: payments-api,  version: 2.4.0 }
+      - { id: deploy_orders,    deploy: orders-api,    version: 1.8.0, dependsOn: [deploy_catalog, deploy_payments] }

@@ -24,6 +24,11 @@ parameters:
   - name: dotnetVersion
     type: string
     default: 8.x
+  # Where assemble-package.sh lives. With the templates in their own repo, check that repo out
+  # alongside the API and point this at it.
+  - name: scriptsPath
+    type: string
+    default: experiments/azure-devops-versioned-release-manifest/pipelines/scripts
 
 stages:
   - stage: build
@@ -49,39 +54,12 @@ stages:
                 command: test
                 projects: ${{ parameters.testProjects }}
 
-          - task: DotNetCoreCLI@2
-            displayName: Publish $(version)
-            inputs:
-              command: publish
-              publishWebProjects: false
-              projects: ${{ parameters.project }}
-              arguments: -c Release -o $(Build.ArtifactStagingDirectory)/publish -p:Version=$(version)
-              zipAfterPublish: false
-              modifyOutputPath: false
-
-          - task: ArchiveFiles@2
-            displayName: Zip app
-            inputs:
-              rootFolderOrFile: $(Build.ArtifactStagingDirectory)/publish
-              includeRootFolder: false
-              archiveType: zip
-              archiveFile: $(Build.ArtifactStagingDirectory)/package/app.zip
-
-          - bash: |
-              set -euo pipefail
-              projectDir="$(dirname '${{ parameters.project }}')"
-              cp "$projectDir/release-rules.yaml" "$(Build.ArtifactStagingDirectory)/package/"
-              cat > "$(Build.ArtifactStagingDirectory)/package/build-info.json" <<EOF
-              {
-                "api": "${{ parameters.api }}",
-                "version": "$(version)",
-                "commit": "$(Build.SourceVersion)",
-                "branch": "$(Build.SourceBranch)",
-                "buildId": "$(Build.BuildId)",
-                "buildUrl": "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
-              }
-              EOF
-            displayName: Add release rules and build info
+          # The same script the local packaging tests run (scripts/test-packaging.cs).
+          - bash: >
+              bash ${{ parameters.scriptsPath }}/assemble-package.sh
+              '${{ parameters.api }}' '${{ parameters.project }}' '$(version)'
+              '$(Build.ArtifactStagingDirectory)/package'
+            displayName: Assemble package ${{ parameters.api }} $(version)
 
           - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
             - task: UniversalPackages@0
