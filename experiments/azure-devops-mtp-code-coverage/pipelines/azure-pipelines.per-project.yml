@@ -1,0 +1,97 @@
+# Alternative layout: one job per test project, running in parallel.
+#
+# Use this when test projects are slow or need different agents. Each job runs a single project
+# with `dotnet test --project`, and that project's testconfig.json still decides what its coverage
+# includes and what bar it has to clear, exactly as in azure-pipelines.yml.
+#
+# Trade-off: Azure DevOps keeps one coverage report per run, and the last PublishCodeCoverageResults
+# to finish wins. So this layout publishes test results from every job, but merges coverage in a final
+# job that downloads every job's reports.
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  experimentPath: experiments/azure-devops-mtp-code-coverage
+
+jobs:
+  - job: test
+    displayName: Test
+    strategy:
+      matrix:
+        domain:
+          testProject: Orders.Domain.Tests
+        api:
+          testProject: Orders.Api.Tests
+    steps:
+      - checkout: self
+        fetchDepth: 1
+
+      - task: UseDotNet@2
+        inputs:
+          packageType: sdk
+          useGlobalJson: true
+          workingDirectory: $(experimentPath)
+
+      - task: DotNetCoreCLI@2
+        displayName: Test $(testProject) with coverage (MTP)
+        inputs:
+          command: custom
+          custom: test
+          workingDirectory: $(experimentPath)
+          arguments: >-
+            --project tests/$(testProject)
+            --configuration Release
+            --no-progress
+            --results-directory $(Agent.TempDirectory)/TestResults
+            --coverage
+            --report-trx
+            --report-trx-filename {asm}.trx
+
+      - task: PublishTestResults@2
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: VSTest
+          testResultsFiles: '*.trx'
+          searchFolder: $(Agent.TempDirectory)/TestResults
+          testRunTitle: $(testProject)
+          failTaskOnFailedTests: false
+
+      # Point --tests at this project's folder only: the other project's report isn't on this
+      # agent, and the gate would (rightly) fail it as missing.
+      - task: DotNetCoreCLI@2
+        displayName: Enforce $(testProject) coverage
+        inputs:
+          command: custom
+          custom: run
+          workingDirectory: $(experimentPath)
+          arguments: >-
+            scripts/check-coverage.cs --
+            --results $(Agent.TempDirectory)/TestResults
+            --tests tests/$(testProject)
+            --summary $(Agent.TempDirectory)/coverage-summary.md
+
+      - publish: $(Agent.TempDirectory)/TestResults
+        artifact: coverage-$(testProject)
+        condition: succeededOrFailed()
+
+  - job: coverage
+    displayName: Merge and publish coverage
+    dependsOn: test
+    condition: succeededOrFailed()
+    steps:
+      - checkout: self
+        fetchDepth: 1
+      - download: current
+        patterns: 'coverage-*/*.cobertura.xml'
+      - task: PublishCodeCoverageResults@2
+        inputs:
+          summaryFileLocation: $(Pipeline.Workspace)/coverage-*/*.cobertura.xml
+          pathToSources: $(Build.SourcesDirectory)
+          failIfCoverageEmpty: true

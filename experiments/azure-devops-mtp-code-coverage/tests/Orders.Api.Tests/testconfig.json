@@ -1,0 +1,41 @@
+// Microsoft.Testing.Platform configuration for Orders.Api.Tests.
+// The build copies this next to the test app as Orders.Api.Tests.testconfig.json, so it only
+// ever applies to this project. Compare with tests/Orders.Domain.Tests/testconfig.json.
+{
+  "platformOptions": {
+    "exitProcessOnUnhandledException": true
+  },
+
+  "codeCoverage": {
+    "Configuration": {
+      "Format": "cobertura",
+      "CoverageFileName": "Orders.Api.Tests.cobertura.xml",
+      "CodeCoverage": {
+        // These tests run the whole API in memory, so Orders.Domain.dll is executed too.
+        // Counting it here would let HTTP tests "cover" business rules nobody asserted on,
+        // so this project only reports on the API assembly.
+        "ModulePaths": {
+          "Include": [ ".*Orders\\.Api\\.dll$" ]
+        },
+        "Sources": {
+          "Exclude": [
+            // Composition root: wiring only, plus a Development-only MapOpenApi() branch.
+            ".*[\\\\/]Orders\\.Api[\\\\/]Program\\.cs$",
+            // Source-generated code (validation, OpenAPI, request delegates) lands under obj/.
+            ".*[\\\\/]obj[\\\\/].*"
+          ]
+        },
+        "Attributes": {
+          "Exclude": [ "^System\\.CodeDom\\.Compiler\\.GeneratedCodeAttribute$" ]
+        }
+      }
+    }
+  },
+
+  // Read by scripts/check-coverage.cs. Endpoint tests cover the HTTP surface; the bar is lower
+  // than the domain's on purpose.
+  "coverageGate": {
+    "minimumLineRate": 85,
+    "minimumBranchRate": 75
+  }
+}

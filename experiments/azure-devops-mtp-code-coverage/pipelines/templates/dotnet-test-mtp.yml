@@ -1,0 +1,136 @@
+# Reusable steps: run Microsoft.Testing.Platform (MTP) tests with code coverage, publish the
+# results to the run, then enforce each test project's own coverage bar.
+#
+# Nothing coverage-specific is passed per project. Every test project carries a testconfig.json
+# with a `codeCoverage` section (what to include/exclude, output format, file name) and a
+# `coverageGate` section (its minimum line/branch rate). One `dotnet test --coverage` run picks
+# each project's settings up from its own file. See the experiment's README.
+#
+# Requires a global.json next to the solution with "test": { "runner": "Microsoft.Testing.Platform" }
+# (the .NET 10 SDK's native MTP mode for `dotnet test`).
+
+parameters:
+  # Folder holding global.json and the solution. Relative to $(Build.SourcesDirectory).
+  - name: workingDirectory
+    type: string
+  - name: solution
+    type: string
+  - name: configuration
+    type: string
+    default: Release
+  # Folder (relative to workingDirectory) containing the test projects and their testconfig.json.
+  - name: testsDirectory
+    type: string
+    default: tests
+  - name: testRunTitle
+    type: string
+    default: Unit tests
+  - name: enforceCoverageGate
+    type: boolean
+    default: true
+  # Extra arguments for dotnet test, e.g. --filter "TestCategory!=Slow" or --minimum-expected-tests 50.
+  - name: extraTestArguments
+    type: string
+    default: ''
+
+steps:
+  # Reads the SDK version from global.json, so the pipeline and developers can't drift apart.
+  - task: UseDotNet@2
+    displayName: Install .NET SDK from global.json
+    inputs:
+      packageType: sdk
+      useGlobalJson: true
+      workingDirectory: ${{ parameters.workingDirectory }}
+
+  - task: DotNetCoreCLI@2
+    displayName: Restore
+    inputs:
+      command: restore
+      projects: ${{ parameters.workingDirectory }}/${{ parameters.solution }}
+
+  - task: DotNetCoreCLI@2
+    displayName: Build
+    inputs:
+      command: build
+      projects: ${{ parameters.workingDirectory }}/${{ parameters.solution }}
+      arguments: --configuration ${{ parameters.configuration }} --no-restore
+
+  # Run every test project and collect coverage.
+  #
+  # Why `command: custom` and not `command: test`: DotNetCoreCLI@2's `test` command was built for
+  # VSTest. It appends `--logger trx` VSTest-style; under MTP every test app rejects that as an
+  # invalid option (exit code 5, zero tests run). `custom` runs exactly the arguments below.
+  #
+  #   --solution            .NET 10 MTP mode takes --solution/--project instead of a positional path.
+  #   --coverage            Microsoft.Testing.Extensions.CodeCoverage (bundled by MSTest.Sdk).
+  #                         Format, file name and filters come from each project's testconfig.json.
+  #   --report-trx          Microsoft.Testing.Extensions.TrxReport (also bundled by MSTest.Sdk).
+  #   --report-trx-filename {asm}.trx gives one predictable TRX per test project.
+  #   --results-directory   one shared folder; the per-project file names keep reports apart.
+  #   --no-progress         no live progress bar in a log that isn't a terminal.
+  - task: DotNetCoreCLI@2
+    displayName: Test with coverage (MTP)
+    inputs:
+      command: custom
+      custom: test
+      workingDirectory: ${{ parameters.workingDirectory }}
+      arguments: >-
+        --solution ${{ parameters.solution }}
+        --configuration ${{ parameters.configuration }}
+        --no-build
+        --no-progress
+        --results-directory $(Agent.TempDirectory)/TestResults
+        --coverage
+        --report-trx
+        --report-trx-filename {asm}.trx
+        ${{ parameters.extraTestArguments }}
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+  # Test results tab. Runs even when tests failed, so the failures are visible in the UI.
+  # failTaskOnFailedTests is off because the test step above has already failed the job.
+  - task: PublishTestResults@2
+    displayName: Publish test results
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: VSTest
+      testResultsFiles: '*.trx'
+      searchFolder: $(Agent.TempDirectory)/TestResults
+      testRunTitle: ${{ parameters.testRunTitle }}
+      mergeTestResults: false
+      failTaskOnFailedTests: false
+
+  # Code Coverage tab. v2 accepts several Cobertura (or .coverage) files and merges them into a
+  # single report with an HTML view, so the per-project reports go in together.
+  # Azure DevOps keeps ONE coverage report per run; the per-project breakdown is the gate's
+  # summary below (Extensions tab).
+  - task: PublishCodeCoverageResults@2
+    displayName: Publish code coverage
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: $(Agent.TempDirectory)/TestResults/*.cobertura.xml
+      pathToSources: $(Build.SourcesDirectory)
+      failIfCoverageEmpty: true
+
+  # Raw reports, for anyone who wants to open them in an IDE or ReportGenerator locally.
+  - task: PublishPipelineArtifact@1
+    displayName: Publish coverage reports artifact
+    condition: succeededOrFailed()
+    inputs:
+      targetPath: $(Agent.TempDirectory)/TestResults
+      artifact: test-results-$(System.JobAttempt)
+
+  # Per-project coverage bar. Only runs if the tests passed: coverage from a failed run means little.
+  # Writes a table to the run's Extensions tab and logs one pipeline error per project under its bar.
+  - ${{ if parameters.enforceCoverageGate }}:
+    - task: DotNetCoreCLI@2
+      displayName: Enforce per-project coverage
+      inputs:
+        command: custom
+        custom: run
+        workingDirectory: ${{ parameters.workingDirectory }}
+        arguments: >-
+          scripts/check-coverage.cs --
+          --results $(Agent.TempDirectory)/TestResults
+          --tests ${{ parameters.testsDirectory }}
+          --summary $(Agent.TempDirectory)/coverage-summary.md

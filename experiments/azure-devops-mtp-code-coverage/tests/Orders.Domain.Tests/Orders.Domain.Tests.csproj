@@ -1,0 +1,8 @@
+<Project Sdk="MSTest.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Orders.Domain\Orders.Domain.csproj" />
+  </ItemGroup>
+</Project>
