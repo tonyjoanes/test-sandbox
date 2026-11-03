@@ -1,0 +1,33 @@
+// Microsoft.Testing.Platform configuration for Orders.Domain.Tests.
+// The build copies this next to the test app as Orders.Domain.Tests.testconfig.json, so it only
+// ever applies to this project. `dotnet test --coverage` then picks the settings up from here:
+// nothing coverage-specific needs to be passed on the command line per project.
+{
+  "platformOptions": {
+    "exitProcessOnUnhandledException": true
+  },
+
+  // Read by Microsoft.Testing.Extensions.CodeCoverage (18.0+). Same settings as a .runsettings
+  // <DataCollector> block or a --coverage-settings file, in JSON.
+  "codeCoverage": {
+    "Configuration": {
+      "Format": "cobertura",
+      // A distinct name per project, so every project can share one --results-directory.
+      "CoverageFileName": "Orders.Domain.Tests.cobertura.xml",
+      "CodeCoverage": {
+        // Domain tests are the only tests that should be counted for the domain library.
+        // Orders.Api is not referenced here, but listing an include is what keeps it that way.
+        "ModulePaths": {
+          "Include": [ ".*Orders\\.Domain\\.dll$" ]
+        }
+      }
+    }
+  },
+
+  // Not part of MTP or the coverage extension: read by scripts/check-coverage.cs after the run.
+  // Pure business rules, so the bar is high.
+  "coverageGate": {
+    "minimumLineRate": 95,
+    "minimumBranchRate": 90
+  }
+}

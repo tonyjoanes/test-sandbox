@@ -1,0 +1,69 @@
+# Demo pipeline: build the Orders API, run both MTP test projects with code coverage, publish
+# the test results and coverage to the run, and fail if any project is under its own bar.
+#
+# Create it in Azure DevOps with Pipelines > New pipeline > (your repo) > Existing Azure Pipelines
+# YAML file > experiments/azure-devops-mtp-code-coverage/pipelines/azure-pipelines.yml.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - experiments/azure-devops-mtp-code-coverage
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - experiments/azure-devops-mtp-code-coverage
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  experimentPath: experiments/azure-devops-mtp-code-coverage
+
+stages:
+  - stage: test
+    displayName: Build and test
+    jobs:
+      - job: unit_tests
+        displayName: Unit tests + coverage
+        steps:
+          - checkout: self
+            fetchDepth: 1
+
+          - template: templates/dotnet-test-mtp.yml
+            parameters:
+              workingDirectory: $(experimentPath)
+              solution: Orders.slnx
+              testRunTitle: Orders unit tests
+
+  # Only a build that passed its tests and coverage gates gets a deployable package.
+  - stage: package
+    displayName: Package API
+    dependsOn: test
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: publish
+        steps:
+          - checkout: self
+            fetchDepth: 1
+          - task: UseDotNet@2
+            inputs:
+              packageType: sdk
+              useGlobalJson: true
+              workingDirectory: $(experimentPath)
+          - task: DotNetCoreCLI@2
+            displayName: dotnet publish
+            inputs:
+              command: publish
+              publishWebProjects: false
+              projects: $(experimentPath)/src/Orders.Api/Orders.Api.csproj
+              arguments: --configuration Release --output $(Build.ArtifactStagingDirectory)/orders-api
+              zipAfterPublish: true
+          - publish: $(Build.ArtifactStagingDirectory)/orders-api
+            artifact: orders-api
