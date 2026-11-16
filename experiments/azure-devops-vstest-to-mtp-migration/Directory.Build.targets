@@ -1,0 +1,18 @@
+<Project>
+  <!-- Per-test-project wiring for both runners. Here rather than in Directory.Build.props because
+       IsTestProject is only known once the project file itself has been read. -->
+
+  <!-- VSTest: each test project's coverlet.collector settings come from its own coverage.runsettings.
+       `dotnet test` on the solution then gives every project its own coverage scope. -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true' and '$(TestRunner)' == 'VSTest' and Exists('$(MSBuildProjectDirectory)/coverage.runsettings')">
+    <RunSettingsFilePath>$(MSBuildProjectDirectory)/coverage.runsettings</RunSettingsFilePath>
+  </PropertyGroup>
+
+  <!-- MTP: coverlet.MTP settings (scope + threshold) come from each project's testconfig.json.
+       The one thing testconfig.json can't set is the report file prefix, so name each report after
+       its project here. Reports are then <Project>.coverage.cobertura.<timestamp>.xml, all in one
+       results folder, and scripts/coverage-report.cs can tell which is whose. -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true' and '$(TestRunner)' == 'MTP'">
+    <TestingPlatformCommandLineArguments>$(TestingPlatformCommandLineArguments) --coverlet-file-prefix $(MSBuildProjectName)</TestingPlatformCommandLineArguments>
+  </PropertyGroup>
+</Project>

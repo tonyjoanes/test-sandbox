@@ -1,0 +1,13 @@
+{
+  "platformOptions": {
+    "Coverlet": {
+      "format": "cobertura",
+      "include": "[Orders.Domain]*",
+      "excludeByAttribute": "GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute",
+      "skipAutoProps": true,
+      "threshold": 95,
+      "thresholdType": "line,branch",
+      "thresholdStat": "total"
+    }
+  }
+}

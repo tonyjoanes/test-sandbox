@@ -1,0 +1,14 @@
+{
+  "platformOptions": {
+    "Coverlet": {
+      "format": "cobertura",
+      "include": "[Orders.Api]*",
+      "excludeByFile": "**/Program.cs,**/obj/**",
+      "excludeByAttribute": "GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute",
+      "skipAutoProps": true,
+      "threshold": 85,
+      "thresholdType": "line,branch",
+      "thresholdStat": "total"
+    }
+  }
+}

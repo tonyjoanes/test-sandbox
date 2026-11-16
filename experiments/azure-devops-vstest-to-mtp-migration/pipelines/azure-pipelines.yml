@@ -1,0 +1,43 @@
+# Demo pipeline for the VSTest -> MTP migration. Runs on whichever runner global.json selects,
+# so it is the same file before the flip, after it, and after a rollback.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - experiments/azure-devops-vstest-to-mtp-migration
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include:
+      - experiments/azure-devops-vstest-to-mtp-migration
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  experimentPath: experiments/azure-devops-vstest-to-mtp-migration
+
+steps:
+  - checkout: self
+    fetchDepth: 1
+
+  - template: templates/dotnet-test-coverage.yml
+    parameters:
+      workingDirectory: $(experimentPath)
+      solution: Orders.slnx
+
+  # While both coverage.runsettings (VSTest) and testconfig.json (MTP) exist, keep them in step,
+  # so the flip measures exactly what VSTest measured. Delete this step with the runsettings files.
+  - bash: |
+      set -e
+      for runsettings in tests/*/coverage.runsettings; do
+        dotnet run scripts/convert-coverage-config.cs -- "$runsettings" --check
+      done
+    displayName: Check testconfig.json matches coverage.runsettings
+    workingDirectory: $(experimentPath)

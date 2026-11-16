@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Pure business rules: no ASP.NET Core, no I/O. Covered by tests/Orders.Domain.Tests. -->
+</Project>

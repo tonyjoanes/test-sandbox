@@ -1,0 +1,112 @@
+# Test + coverage steps that work before AND after the VSTest -> MTP flip.
+#
+# The runner is read from global.json at run time, the same file `dotnet test` and the build read
+# (see Directory.Build.props). So the PR that flips global.json needs no pipeline change, and
+# reverting it rolls the pipeline back too.
+#
+# Both branches end the same way: Cobertura reports from coverlet (identical numbers on both
+# runners), published with the same PublishCodeCoverageResults@2 step.
+
+parameters:
+  - name: workingDirectory   # folder holding global.json and the solution
+    type: string
+  - name: solution
+    type: string
+  - name: configuration
+    type: string
+    default: Release
+  - name: testsDirectory     # relative to workingDirectory; one folder per test project
+    type: string
+    default: tests
+
+steps:
+  - task: UseDotNet@2
+    displayName: Install .NET SDK from global.json
+    inputs:
+      packageType: sdk
+      useGlobalJson: true
+      workingDirectory: ${{ parameters.workingDirectory }}
+
+  - bash: |
+      if grep -q '"Microsoft.Testing.Platform"' global.json; then runner=MTP; else runner=VSTest; fi
+      echo "global.json selects the $runner test runner"
+      echo "##vso[task.setvariable variable=testRunner]$runner"
+    displayName: Detect test runner from global.json
+    workingDirectory: ${{ parameters.workingDirectory }}
+
+  - task: DotNetCoreCLI@2
+    displayName: Build
+    inputs:
+      command: build
+      projects: ${{ parameters.workingDirectory }}/${{ parameters.solution }}
+      arguments: --configuration ${{ parameters.configuration }}
+
+  # ---- VSTest: the step most pipelines have today, unchanged. ---------------------------------
+  # Each project's coverage scope comes from its coverage.runsettings (wired in Directory.Build.targets).
+  # publishTestResults makes the task add `--logger trx` and publish the results itself.
+  - task: DotNetCoreCLI@2
+    displayName: Test with coverage (VSTest + coverlet.collector)
+    condition: and(succeeded(), eq(variables['testRunner'], 'VSTest'))
+    inputs:
+      command: test
+      projects: ${{ parameters.workingDirectory }}/${{ parameters.solution }}
+      arguments: --configuration ${{ parameters.configuration }} --no-build --collect "XPlat Code Coverage"
+      publishTestResults: true
+
+  # ---- MTP ------------------------------------------------------------------------------------
+  # `command: custom`, because `command: test` adds `--logger trx`, which MTP test apps reject.
+  # Each project's coverage scope AND threshold come from its testconfig.json (coverlet.MTP), and
+  # Directory.Build.targets names each report after its project.
+  #   --coverlet          coverlet.MTP, same engine and numbers as coverlet.collector
+  #   --report-xunit-trx  xunit.v3's TRX writer (MSTest projects: --report-trx)
+  - task: DotNetCoreCLI@2
+    displayName: Test with coverage (MTP + coverlet.MTP)
+    condition: and(succeeded(), eq(variables['testRunner'], 'MTP'))
+    inputs:
+      command: custom
+      custom: test
+      workingDirectory: ${{ parameters.workingDirectory }}
+      arguments: >-
+        --solution ${{ parameters.solution }}
+        --configuration ${{ parameters.configuration }}
+        --no-build
+        --no-progress
+        --coverlet
+        --report-xunit-trx
+        --results-directory $(Agent.TempDirectory)/TestResults
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+  - task: PublishTestResults@2
+    displayName: Publish test results (MTP)
+    condition: and(succeededOrFailed(), eq(variables['testRunner'], 'MTP'))
+    inputs:
+      testResultsFormat: VSTest
+      testResultsFiles: '*.trx'
+      searchFolder: $(Agent.TempDirectory)/TestResults
+      failTaskOnFailedTests: false
+
+  # Under `dotnet test`, a coverlet threshold failure only shows as "exit code 14". This prints which
+  # project missed which threshold, puts the table on the run's Extensions tab and logs an error each.
+  - task: DotNetCoreCLI@2
+    displayName: Coverage per project (MTP)
+    condition: and(succeededOrFailed(), eq(variables['testRunner'], 'MTP'))
+    inputs:
+      command: custom
+      custom: run
+      workingDirectory: ${{ parameters.workingDirectory }}
+      arguments: >-
+        scripts/coverage-report.cs --
+        --results $(Agent.TempDirectory)/TestResults
+        --tests ${{ parameters.testsDirectory }}
+        --summary $(Agent.TempDirectory)/coverage-summary.md
+
+  # ---- Both runners ---------------------------------------------------------------------------
+  # VSTest leaves <guid>/coverage.cobertura.xml under the temp folder; MTP leaves
+  # TestResults/<Project>.coverage.cobertura.<timestamp>.xml. One glob finds either.
+  - task: PublishCodeCoverageResults@2
+    displayName: Publish code coverage
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: $(Agent.TempDirectory)/**/*cobertura*.xml
+      pathToSources: $(Build.SourcesDirectory)

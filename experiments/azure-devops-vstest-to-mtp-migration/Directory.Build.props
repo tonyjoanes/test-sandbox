@@ -1,0 +1,43 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(TF_BUILD)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!--
+    The runner switch.
+    ==================
+    TestRunner follows global.json: "test": { "runner": "Microsoft.Testing.Platform" } there means
+    MTP, otherwise VSTest. global.json is also what `dotnet test` itself reads to pick its mode, so the
+    build and `dotnet test` can never disagree, and flipping (or rolling back) is that one line.
+
+    Why it's needed: on the .NET 10 SDK, a project that is an MTP app (xunit.v3 4.x, MSTest with
+    EnableMSTestRunner, MSTest.Sdk) fails VSTest-mode `dotnet test` with "Testing with VSTest target
+    is no longer supported by Microsoft.Testing.Platform on .NET 10 SDK and later". Turning
+    IsTestingPlatformApplication off while on VSTest lets the same project keep running there.
+
+    Pass -p:TestRunner=VSTest or -p:TestRunner=MTP to override, e.g. to build for the other runner
+    without editing global.json.
+  -->
+  <PropertyGroup>
+    <_RepoGlobalJson>$([MSBuild]::GetPathOfFileAbove('global.json', '$(MSBuildProjectDirectory)'))</_RepoGlobalJson>
+    <TestRunner Condition="'$(TestRunner)' == '' and '$(_RepoGlobalJson)' != '' and $([System.IO.File]::ReadAllText('$(_RepoGlobalJson)').Contains('Microsoft.Testing.Platform'))">MTP</TestRunner>
+    <TestRunner Condition="'$(TestRunner)' == ''">VSTest</TestRunner>
+  </PropertyGroup>
+
+  <!-- Must be set here, before the xunit.v3 package props default it to true. -->
+  <PropertyGroup Condition="'$(TestRunner)' == 'VSTest'">
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TestRunner)' == 'MTP'">
+    <!-- xunit.v3: the test exe itself speaks MTP too, so running it directly accepts the coverlet options. -->
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+</Project>

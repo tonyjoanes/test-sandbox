@@ -1,0 +1,44 @@
+# Runs experiments/azure-devops-vstest-to-mtp-migration/ in this GitHub sandbox. The experiment
+# targets Azure DevOps (pipelines/azure-pipelines.yml). scripts/test-migration.cs exercises both
+# runners: VSTest, the global.json flip, MTP with identical coverage, a threshold failure and the
+# rollback. See the experiment's README.
+
+name: VSTest to MTP Migration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'experiments/azure-devops-vstest-to-mtp-migration/**'
+      - '.github/workflows/vstest-to-mtp-migration.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/azure-devops-vstest-to-mtp-migration/**'
+      - '.github/workflows/vstest-to-mtp-migration.yml'
+
+defaults:
+  run:
+    working-directory: experiments/azure-devops-vstest-to-mtp-migration
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  migration:
+    name: Flip and roll back
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: experiments/azure-devops-vstest-to-mtp-migration/global.json
+      - name: testconfig.json matches coverage.runsettings
+        run: |
+          for runsettings in tests/*/coverage.runsettings; do
+            dotnet run scripts/convert-coverage-config.cs -- "$runsettings" --check
+          done
+      - name: VSTest -> MTP -> VSTest
+        run: dotnet run scripts/test-migration.cs
