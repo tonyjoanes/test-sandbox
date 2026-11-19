@@ -1,0 +1,62 @@
+# Runs experiments/dagger-dotnet-pipeline/ with Dagger.
+# Note how little is here: every step lives in the Dagger module (.dagger/src/inventory_api/main.py),
+# so this file only installs the Dagger CLI and calls a function — the same command you run locally.
+
+name: Dagger .NET Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'experiments/dagger-dotnet-pipeline/**'
+      - '.github/workflows/dagger-dotnet-pipeline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/dagger-dotnet-pipeline/**'
+      - '.github/workflows/dagger-dotnet-pipeline.yml'
+  workflow_dispatch: # manual deploy to Azure (needs the secrets/variables in the README)
+
+env:
+  DAGGER_VERSION: 0.21.12
+  DAGGER_NO_NAG: '1'
+
+defaults:
+  run:
+    working-directory: experiments/dagger-dotnet-pipeline
+
+jobs:
+  ci:
+    name: dagger call ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dagger CLI
+        run: curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR=$HOME/.local/bin sh
+      - name: Test + container smoke test
+        run: dagger call ci --version=${{ github.sha }}
+
+  deploy:
+    name: dagger call deploy
+    if: github.event_name == 'workflow_dispatch'
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: azure
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dagger CLI
+        run: curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR=$HOME/.local/bin sh
+      - name: Deploy to Azure Container Apps
+        env:
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        # env://AZURE_CLIENT_SECRET hands the secret to Dagger by reference: it never appears in
+        # the command line, the logs, or the cache.
+        run: >-
+          dagger call deploy
+          --version=${{ github.sha }}
+          --acr-name=${{ vars.ACR_NAME }}
+          --resource-group=${{ vars.AZURE_RESOURCE_GROUP }}
+          --container-app=${{ vars.CONTAINER_APP_NAME }}
+          --tenant-id=${{ vars.AZURE_TENANT_ID }}
+          --client-id=${{ vars.AZURE_CLIENT_ID }}
+          --client-secret=env://AZURE_CLIENT_SECRET
