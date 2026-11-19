@@ -1,0 +1,20 @@
+# Deploys environments/live.yaml when a PR that changes it merges to main.
+#
+# Gates, in order:
+#   1. The PR: required reviewers on live.yaml (branch policy) + release-validation.yml passing.
+#   2. The change request: raised from the plan, and the `live` environment's check waits for
+#      its approval.
+#   3. The `live` environment's Approvals check: one approval for the whole sync stage.
+#   4. Pauses written into live.yaml for this release (Manual Validation between waves).
+trigger:
+  branches: { include: [main] }
+  paths: { include: [environments/live.yaml] }
+pr: none
+lockBehavior: sequential
+
+extends:
+  template: templates/sync-environment.yml
+  parameters:
+    environment: live
+    serviceConnection: sc-release-prod
+    changeRequests: true

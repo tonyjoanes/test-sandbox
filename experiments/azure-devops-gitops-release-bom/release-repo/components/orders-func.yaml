@@ -1,0 +1,26 @@
+# An Azure Function App (isolated worker). Same slot-and-swap flow as an App Service.
+name: orders-func
+type: function-app
+owner: '[Platform]\Orders Team'
+versionPath: /api/version      # an anonymous HTTP-triggered function that returns the assembly version
+targets:
+  dev:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-orders-dev
+    app: func-orders-dev
+    slot: staging
+  uat:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-orders-uat
+    app: func-orders-uat
+    slot: staging
+  staging:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-orders-stg
+    app: func-orders-stg
+    slot: staging
+  live:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-orders-prd
+    app: func-orders-prd
+    slot: staging

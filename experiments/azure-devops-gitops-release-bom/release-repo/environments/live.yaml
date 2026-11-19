@@ -1,0 +1,20 @@
+environment: live
+release: 2026.11.2
+
+components:
+  customers-api: 1.1.4
+  notifications-func: 3.1.0
+  orders-api: 1.7.3
+  orders-func: 1.3.0
+  payments-api: 2.2.7
+  portal-web: 5.0.2
+
+# Release-level hooks run once per sync, before the first wave and after the last.
+# No `release:` on them, so they run for every release.
+hooks:
+  preSync:
+    - name: announce
+      script: hooks/announce-release.sh
+  postSync:
+    - name: storefront-up
+      http: https://www.contoso.example/health

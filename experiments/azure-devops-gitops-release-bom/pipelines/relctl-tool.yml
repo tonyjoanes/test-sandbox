@@ -1,0 +1,19 @@
+# Builds, tests and publishes relctl itself to the `tools` NuGet feed.
+trigger:
+  branches: { include: [main] }
+  paths: { include: [src/*, tests/*] }
+
+pool: { vmImage: ubuntu-latest }
+
+steps:
+  - task: UseDotNet@2
+    inputs: { packageType: sdk, version: 10.0.x }
+  - script: dotnet test
+    displayName: Test
+  - script: dotnet pack src/Relctl -c Release -o $(Build.ArtifactStagingDirectory) -p:Version=0.1.$(Build.BuildId)
+    displayName: Pack
+  - task: NuGetAuthenticate@1
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  - script: dotnet nuget push "$(Build.ArtifactStagingDirectory)/*.nupkg" --source https://pkgs.dev.azure.com/contoso/Platform/_packaging/tools/nuget/v3/index.json --api-key az
+    displayName: Publish to the tools feed
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))

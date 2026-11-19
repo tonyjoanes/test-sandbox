@@ -1,0 +1,11 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: portal-web
+version: 5.1.0
+build:
+  commit: 520c9394b31038f9ae85f5f08827d33c053c6895
+  run: "4897"
+  branch: main
+requires:
+  - component: orders-api
+    minVersion: 1.8.0
+    reason: The new checkout page calls POST /orders/v2, added in orders-api 1.8.0.

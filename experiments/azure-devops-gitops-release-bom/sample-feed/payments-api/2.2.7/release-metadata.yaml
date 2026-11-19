@@ -1,0 +1,7 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: payments-api
+version: 2.2.7
+build:
+  commit: 6481e6f6106e2b6dd05f654221cdcfdf6efe43a4
+  run: "6111"
+  branch: main

@@ -1,0 +1,40 @@
+# Runs the checks for experiments/azure-devops-gitops-release-bom/. The experiment targets
+# Azure DevOps; this workflow only exists so its tests run on every change in this GitHub
+# sandbox. None of them need Azure or Azure DevOps. See the experiment's README, "Testing".
+
+name: GitOps Release BOM
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'experiments/azure-devops-gitops-release-bom/**'
+      - '.github/workflows/gitops-release-bom.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'experiments/azure-devops-gitops-release-bom/**'
+      - '.github/workflows/gitops-release-bom.yml'
+
+defaults:
+  run:
+    working-directory: experiments/azure-devops-gitops-release-bom
+
+jobs:
+  test:
+    name: relctl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Unit and component tests
+        run: dotnet test
+      - name: Validate the example release repo
+        run: dotnet run --project src/Relctl -- validate --repo release-repo --local-feed sample-feed --summary "$GITHUB_STEP_SUMMARY"
+      - name: End-to-end demo (promote, PR checks, plan, change request, dry-run apply, BOM, rollback)
+        run: ./demo/run-demo.sh
+      - name: Pipeline template expansion (Runner.Server)
+        working-directory: experiments/azure-devops-gitops-release-bom/scripts
+        run: dotnet run test-pipeline-expansion.cs

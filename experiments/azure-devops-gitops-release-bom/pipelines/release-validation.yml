@@ -1,0 +1,33 @@
+# Build validation for PRs to the release repo (add it as a branch policy on main).
+#
+# 1. `relctl validate --base <target>`: every rule, including the ones about what this PR
+#    changes: promotion order, downgrades without `rollback:`, release names, freezes.
+# 2. `relctl plan --base <target>` per environment: what merging this PR would do, assuming
+#    each environment is as main says. It shows on the run's summary tab for reviewers.
+#
+# Needs no Azure access, only the package feed.
+trigger: none
+pr: none   # Azure Repos PRs run this through the branch policy, not a pr trigger
+
+pool: { vmImage: ubuntu-latest }
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - template: templates/install-relctl.yml
+  - bash: |
+      set -euo pipefail
+      target="${SYSTEM_PULLREQUEST_TARGETBRANCH#refs/heads/}"
+      git fetch --no-tags origin "+refs/heads/$target:refs/remotes/origin/$target"
+      out="$(Build.ArtifactStagingDirectory)"
+
+      relctl validate --base "origin/$target" --summary "$out/validate.md" --feed-cache "$out/packages"
+
+      for file in environments/*.yaml; do
+        env=$(basename "$file" .yaml)
+        relctl plan --env "$env" --base "origin/$target" --out "$out/plans/$env" --feed-cache "$out/packages" >/dev/null
+        echo "##vso[task.uploadsummary]$out/plans/$env/plan.md"
+      done
+    displayName: Validate and preview the release
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

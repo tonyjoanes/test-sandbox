@@ -1,0 +1,35 @@
+# A React front end on a storage account static website. Built once; the environment's settings
+# are written to /config.json at deploy time, which the app fetches when it starts.
+name: portal-web
+type: static-site
+owner: '[Platform]\Web Team'
+versionPath: /config.json      # relctl writes "version" into config.json, then reads it back to confirm
+targets:
+  dev:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-portal-dev
+    storageAccount: stportaldev
+    config:
+      apiBaseUrl: https://api-dev.contoso.example
+      authority: https://login.microsoftonline.com/contoso-dev.example
+  uat:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-portal-uat
+    storageAccount: stportaluat
+    config:
+      apiBaseUrl: https://api-uat.contoso.example
+      authority: https://login.microsoftonline.com/contoso-uat.example
+  staging:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-portal-stg
+    storageAccount: stportalstg
+    config:
+      apiBaseUrl: https://api-stg.contoso.example
+      authority: https://login.microsoftonline.com/contoso.example
+  live:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-portal-prd
+    storageAccount: stportalprd
+    config:
+      apiBaseUrl: https://api.contoso.example
+      authority: https://login.microsoftonline.com/contoso.example

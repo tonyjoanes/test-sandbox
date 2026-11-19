@@ -1,0 +1,29 @@
+# The rules of the road for every release. Owned by the platform team (see CODEOWNERS).
+
+# Where build pipelines publish packages, and where relctl reads them from.
+feed:
+  organization: https://dev.azure.com/contoso
+  project: Platform
+  name: releases
+
+# The most waves (dependency levels) one release can have. The sync pipeline template has this
+# many wave jobs, because Azure DevOps fixes the job graph when a run is queued.
+maxWaves: 5
+
+# The promotion chain. A version can only enter an environment once it is in the one before.
+environments:
+  - name: dev
+
+  - name: uat
+    promotesFrom: dev
+
+  - name: staging
+    promotesFrom: uat
+
+  - name: live
+    promotesFrom: staging
+    changeRequest: true
+    freezes:
+      - from: 2026-12-18
+        to: 2027-01-04
+        reason: Christmas trading freeze

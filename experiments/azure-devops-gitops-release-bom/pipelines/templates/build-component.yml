@@ -1,0 +1,133 @@
+# The build half of "separate build from deploy". Every app repo's pipeline extends this.
+#
+#   build ──► publish package (main only) ──► bump dev (main only)
+#
+# It never deploys anything except by changing environments/dev.yaml, which the dev sync picks
+# up. Getting further than dev is a release: a PR to the release repo.
+#
+# An app repo's azure-pipelines.yml:
+#
+#   name: 1.8.$(Rev:r)          # the build number IS the version: 1.8.0, 1.8.1, ...
+#   trigger: { branches: { include: [main] } }
+#   resources:
+#     repositories:
+#       - repository: release   # the release repo, for this template and for `relctl bump`
+#         type: git
+#         name: Platform/release
+#   extends:
+#     template: pipelines/templates/build-component.yml@release
+#     parameters:
+#       component: orders-api
+#       type: app-service
+#       project: src/Orders.Api/Orders.Api.csproj
+#
+# What a component needs (others' minimum versions) lives in the app repo, next to the code
+# that needs it, as release-requires.yaml. It goes inside the package, so the rules checked at
+# release time are the ones of the exact version being released:
+#
+#   requires:
+#     - component: payments-api
+#       minVersion: 2.3.0
+#       reason: Uses the payment-intents endpoint added in payments-api 2.3.0.
+
+parameters:
+  - name: component
+    type: string
+  - name: type
+    type: string
+    values: [app-service, function-app, static-site]
+  - name: project          # .NET: the project to publish
+    type: string
+    default: ''
+  - name: webDir           # static-site: the folder with package.json
+    type: string
+    default: '.'
+  - name: webOutput        # static-site: the build output folder, relative to webDir
+    type: string
+    default: dist
+  - name: feed
+    type: string
+    default: Platform/releases
+
+stages:
+  - stage: build
+    jobs:
+      - job: build
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+          - ${{ if ne(parameters.type, 'static-site') }}:
+              - task: UseDotNet@2
+                inputs: { packageType: sdk, version: 10.0.x }
+              - script: dotnet test --configuration Release
+                displayName: Test
+              # The version goes into the assembly, so the app can report it on its versionPath.
+              - script: dotnet publish "${{ parameters.project }}" --configuration Release -p:Version=$(Build.BuildNumber) --output "$(Agent.TempDirectory)/app"
+                displayName: Publish
+              - script: mkdir -p "$(Build.ArtifactStagingDirectory)/package" && cd "$(Agent.TempDirectory)/app" && zip -qr "$(Build.ArtifactStagingDirectory)/package/app.zip" .
+                displayName: Zip app.zip
+          - ${{ else }}:
+              - task: NodeTool@0
+                inputs: { versionSpec: 22.x }
+              # No environment settings at build time (no VITE_/REACT_APP_ URLs): the app reads
+              # /config.json at startup, and relctl writes that file per environment at deploy time.
+              - script: npm ci && npm test -- --run && npm run build
+                workingDirectory: ${{ parameters.webDir }}
+                displayName: Test and build
+              - script: mkdir -p "$(Build.ArtifactStagingDirectory)/package" && cd "${{ parameters.webDir }}/${{ parameters.webOutput }}" && zip -qr "$(Build.ArtifactStagingDirectory)/package/site.zip" .
+                displayName: Zip site.zip
+
+          - bash: |
+              set -euo pipefail
+              {
+                echo "component: ${{ parameters.component }}"
+                echo "version: $(Build.BuildNumber)"
+                echo "build:"
+                echo "  commit: $(Build.SourceVersion)"
+                echo "  run: \"$(Build.BuildId)\""
+                echo "  branch: $(Build.SourceBranchName)"
+                if [[ -f release-requires.yaml ]]; then grep -v '^#' release-requires.yaml; fi
+              } > "$(Build.ArtifactStagingDirectory)/package/release-metadata.yaml"
+              cat "$(Build.ArtifactStagingDirectory)/package/release-metadata.yaml"
+            displayName: Write release-metadata.yaml
+
+          # Only main publishes. A PR build proves it compiles and passes; it never becomes a package.
+          - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+              - task: UniversalPackages@0
+                displayName: Publish ${{ parameters.component }} $(Build.BuildNumber)
+                inputs:
+                  command: publish
+                  publishDirectory: $(Build.ArtifactStagingDirectory)/package
+                  feedsToUsePublish: internal
+                  vstsFeedPublish: ${{ parameters.feed }}
+                  vstsFeedPackagePublish: ${{ parameters.component }}
+                  versionOption: custom
+                  versionPublish: $(Build.BuildNumber)
+
+  - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      - stage: dev
+        displayName: Bump dev
+        dependsOn: build
+        jobs:
+          - job: bump
+            pool: { vmImage: ubuntu-latest }
+            steps:
+              - checkout: release
+                persistCredentials: true
+              - template: install-relctl.yml
+              # A PR with auto-complete, not a push: the release repo's validation still runs, so
+              # a build whose requirements dev can't meet stops here, with the reason.
+              - bash: |
+                  set -euo pipefail
+                  branch="bump/${{ parameters.component }}-$(Build.BuildNumber)"
+                  git switch -c "$branch"
+                  relctl bump --env dev --component "${{ parameters.component }}" --version "$(Build.BuildNumber)"
+                  git -c user.name="$(Build.RequestedFor)" -c user.email="build@invalid" \
+                    commit -am "dev: ${{ parameters.component }} $(Build.BuildNumber)"
+                  git push origin "$branch"
+                  az repos pr create --org "$(System.CollectionUri)" --project "$(System.TeamProject)" --repository release \
+                    --source-branch "$branch" --target-branch main --auto-complete true --squash true --delete-source-branch true \
+                    --title "dev: ${{ parameters.component }} $(Build.BuildNumber)" --output none
+                displayName: Open an auto-complete PR moving dev to $(Build.BuildNumber)
+                env:
+                  AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

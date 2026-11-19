@@ -1,0 +1,11 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: orders-func
+version: 1.3.0
+build:
+  commit: 969914efc143eaf9ec8bfd75950d1c878b41ff00
+  run: "5999"
+  branch: main
+requires:
+  - component: orders-api
+    minVersion: 1.7.0
+    reason: Reads the OrderPlaced v1 event from orders-api.

@@ -1,0 +1,7 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: customers-api
+version: 1.2.0
+build:
+  commit: 36da62e546739132f1b6774369e292dabb5a8441
+  run: "1614"
+  branch: main

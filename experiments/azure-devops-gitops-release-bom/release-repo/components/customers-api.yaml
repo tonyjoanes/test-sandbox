@@ -1,0 +1,35 @@
+# A C# Web API on App Service. Deployed to the `staging` slot, checked, then swapped in.
+name: customers-api
+type: app-service
+owner: '[Platform]\Customers Team'
+versionPath: /version          # the API returns its own version here; relctl checks it before and after the swap
+hooks:
+  preSync:
+    # Runs the EF Core migration bundle that ships in the package, before the new code goes live.
+    # Migrations must be backwards compatible (expand/contract): the old code keeps running on them until the swap.
+    - name: migrate-database
+      script: hooks/run-migration-bundle.sh
+  postSync:
+    - name: ready
+      http: /health/ready
+targets:
+  dev:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-customers-dev
+    app: app-customers-dev
+    slot: staging
+  uat:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-customers-uat
+    app: app-customers-uat
+    slot: staging
+  staging:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-customers-stg
+    app: app-customers-stg
+    slot: staging
+  live:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-customers-prd
+    app: app-customers-prd
+    slot: staging

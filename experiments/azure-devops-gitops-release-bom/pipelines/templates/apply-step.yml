@@ -1,0 +1,27 @@
+# One `relctl apply` call inside a deployment job: check out the release repo (for hook
+# scripts), take the plan and packages from the plan stage, and run one part of the plan.
+parameters:
+  - name: serviceConnection
+    type: string
+  - name: part              # --pre-sync | --wave <n> | --post-sync
+    type: string
+  - name: displayName
+    type: string
+
+steps:
+  - checkout: self          # deployment jobs don't check out by default
+  - download: current
+    artifact: release
+  - template: install-relctl.yml
+  - task: AzureCLI@2
+    displayName: ${{ parameters.displayName }}
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        relctl apply --plan "$(Pipeline.Workspace)/release/plan/plan.json" ${{ parameters.part }} \
+          --feed-cache "$(Pipeline.Workspace)/release/packages"
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)

@@ -1,0 +1,19 @@
+environment: staging
+release: 2026.11.3
+
+components:
+  customers-api: 1.2.0
+  notifications-func: 3.1.0
+  orders-api: 1.8.0
+  orders-func: 1.4.0
+  payments-api: 2.3.1
+  portal-web: 5.1.0
+
+# One-off pauses belong to one release. When the next release is named, validation fails until
+# this is deleted, so it can't stop a later release by accident.
+pauses:
+  - before: payments-api
+    release: 2026.11.3
+    instructions: |
+      Run the "customers-billing-backfill" WebJob on app-customers-stg and wait for it to finish.
+      The "Customers without billing profile" tile on the Customers dashboard must read 0.

@@ -1,0 +1,26 @@
+# No slot in dev (a Consumption plan in dev keeps costs down), so dev deploys straight to production
+# there. If its checks fail, there's nothing to swap back to: the fix is a manifest change.
+name: notifications-func
+type: function-app
+owner: '[Platform]\Messaging Team'
+versionPath: /api/version
+targets:
+  dev:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-notifications-dev
+    app: func-notify-dev
+  uat:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-notifications-uat
+    app: func-notify-uat
+    slot: staging
+  staging:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-notifications-stg
+    app: func-notify-stg
+    slot: staging
+  live:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-notifications-prd
+    app: func-notify-prd
+    slot: staging

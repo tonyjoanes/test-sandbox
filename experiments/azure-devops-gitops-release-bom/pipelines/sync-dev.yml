@@ -1,0 +1,13 @@
+# Deploys environments/dev.yaml whenever it changes on main. Build pipelines change it with
+# `relctl bump`, so this is effectively "deploy every build of main to dev".
+trigger:
+  branches: { include: [main] }
+  paths: { include: [environments/dev.yaml] }
+pr: none
+lockBehavior: sequential   # with the environment's Exclusive Lock check, runs queue rather than overlap
+
+extends:
+  template: templates/sync-environment.yml
+  parameters:
+    environment: dev
+    serviceConnection: sc-release-nonprod

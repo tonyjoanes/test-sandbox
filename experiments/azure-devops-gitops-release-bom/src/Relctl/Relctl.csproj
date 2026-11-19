@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- relctl: reads the release repo, checks it, plans a release and deploys it with `az`.
+       Packed as a .NET tool so pipelines can `dotnet tool install` it from the same feed as
+       everything else. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Relctl</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>relctl</ToolCommandName>
+    <PackageId>Relctl</PackageId>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Relctl.Tests" />
+  </ItemGroup>
+</Project>

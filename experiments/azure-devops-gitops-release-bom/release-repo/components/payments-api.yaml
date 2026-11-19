@@ -1,0 +1,29 @@
+name: payments-api
+type: app-service
+owner: '[Platform]\Payments Team'
+versionPath: /version
+hooks:
+  postSync:
+    - name: ready
+      http: /health/ready
+targets:
+  dev:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-payments-dev
+    app: app-payments-dev
+    slot: staging
+  uat:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-payments-uat
+    app: app-payments-uat
+    slot: staging
+  staging:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-payments-stg
+    app: app-payments-stg
+    slot: staging
+  live:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-payments-prd
+    app: app-payments-prd
+    slot: staging

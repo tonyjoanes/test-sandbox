@@ -1,0 +1,11 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: orders-api
+version: 1.8.2
+build:
+  commit: 2c071fe8c24e2e12cecb6003abb9ac6597690a13
+  run: "1607"
+  branch: main
+requires:
+  - component: payments-api
+    minVersion: 2.3.0
+    reason: Uses the payment-intents endpoint added in payments-api 2.3.0.

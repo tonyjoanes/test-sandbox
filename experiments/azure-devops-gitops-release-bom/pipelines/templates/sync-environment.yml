@@ -1,0 +1,218 @@
+# Syncs one environment to its manifest. Each sync-<env>.yml extends this.
+#
+#   plan ──► change_request ──► sync ─────────────────────────────────────────────────► record
+#            (if policy says)    pre_sync ► [pause_1] ► wave_1 ► [pause_2] ► wave_2 ► … ► post_sync
+#
+# Why a fixed skeleton: Azure DevOps builds the job graph when a run is QUEUED, before anything
+# has read the manifest. So this template always has `waves` wave jobs, each with a pause job in
+# front of it. The plan stage's output variables decide at run time which of them actually do
+# anything; the rest show as skipped. policy.yaml's maxWaves must not exceed the number of waves
+# here, and relctl refuses to plan a release that needs more.
+#
+# Why one `sync` stage, not a stage per wave: approvals, exclusive locks, business hours and
+# change-request checks belong to the Azure DevOps *environment*, and Azure DevOps evaluates them
+# once per stage. One stage means one approval for the whole release, not one per wave.
+#
+# Not run against a real Azure DevOps org from this sandbox: see the README's "Known gaps".
+
+parameters:
+  - name: environment         # matches environments/<name>.yaml AND the Azure DevOps environment name
+    type: string
+  - name: serviceConnection   # workload identity federation, scoped to this environment's resource groups
+    type: string
+  - name: changeRequests      # include the change_request stage (relctl still decides at run time from policy.yaml)
+    type: boolean
+    default: false
+  - name: pauseApprovers
+    type: string
+    default: '[Platform]\Release Managers'
+  - name: waves               # one entry per wave job; `after` is the job it follows
+    type: object
+    default:
+      - { wave: 1, after: pre_sync }
+      - { wave: 2, after: wave_1 }
+      - { wave: 3, after: wave_2 }
+      - { wave: 4, after: wave_3 }
+      - { wave: 5, after: wave_4 }
+
+variables:
+  releaseDir: $(Pipeline.Workspace)/release
+
+stages:
+  # ── Plan: what's in the manifest vs what's deployed ──────────────────────────────────────
+  - stage: plan
+    displayName: Plan ${{ parameters.environment }}
+    jobs:
+      - job: plan
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+          - template: install-relctl.yml
+          - task: AzureCLI@2
+            name: plan    # output variables: plan.hasChanges, plan.wave1..N, plan.pause1..N, plan.changeRequest, plan.release
+            displayName: Validate and plan
+            inputs:
+              azureSubscription: ${{ parameters.serviceConnection }}
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                out="$(Build.ArtifactStagingDirectory)"
+                relctl validate --summary "$out/validate.md" --feed-cache "$out/packages"
+                relctl plan --env "${{ parameters.environment }}" --out "$out/plan" --feed-cache "$out/packages" --pipeline
+            env:
+              AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)   # for `az artifacts universal download`
+          # The packages the plan checked are published with it. Every later job deploys these
+          # exact files rather than downloading again.
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: release
+
+  # ── Change request (live only, by default) ───────────────────────────────────────────────
+  - ${{ if parameters.changeRequests }}:
+      - stage: change_request
+        displayName: Raise change request
+        dependsOn: plan
+        condition: and(succeeded(), eq(dependencies.plan.outputs['plan.plan.changeRequest'], 'true'))
+        variables:
+          - group: servicenow   # SERVICENOW_URL, SERVICENOW_USER, SERVICENOW_PASSWORD (secret)
+        jobs:
+          - job: raise
+            pool: { vmImage: ubuntu-latest }
+            steps:
+              - checkout: self
+              - download: current
+                artifact: release
+              - template: install-relctl.yml
+              - bash: |
+                  set -euo pipefail
+                  relctl change-request --plan "$(releaseDir)/plan/plan.json" --out cr.json
+                  number=$(curl --fail --silent --show-error -u "$SERVICENOW_USER:$SERVICENOW_PASSWORD" \
+                    -H 'Content-Type: application/json' -H 'Accept: application/json' \
+                    --data @cr.json "$SERVICENOW_URL/api/now/table/change_request" | jq -r '.result.number')
+                  echo "Raised $number"
+                  echo "##vso[task.setvariable variable=number;isOutput=true]$number"
+                  echo "##vso[build.addbuildtag]$number"
+                name: cr
+                displayName: Raise the change request
+                env:
+                  SERVICENOW_PASSWORD: $(SERVICENOW_PASSWORD)
+        # The `live` environment's "Invoke REST API" check then waits for this CR to be approved
+        # before the sync stage starts. See the README, "Setting it up".
+
+  # ── Sync: hooks and waves, one job each ──────────────────────────────────────────────────
+  - stage: sync
+    displayName: Sync ${{ parameters.environment }}
+    dependsOn:
+      - plan
+      - ${{ if parameters.changeRequests }}:
+          - change_request
+    # Template expressions can't go inside a condition string, so there are two versions of it.
+    ${{ if parameters.changeRequests }}:
+      condition: >-
+        and(eq(dependencies.plan.result, 'Succeeded'),
+            eq(dependencies.plan.outputs['plan.plan.hasChanges'], 'true'),
+            in(dependencies.change_request.result, 'Succeeded', 'Skipped'))
+    ${{ else }}:
+      condition: >-
+        and(eq(dependencies.plan.result, 'Succeeded'),
+            eq(dependencies.plan.outputs['plan.plan.hasChanges'], 'true'))
+    jobs:
+      - deployment: pre_sync
+        displayName: Pre-sync hooks
+        environment: ${{ parameters.environment }}
+        pool: { vmImage: ubuntu-latest }
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: apply-step.yml
+                  parameters: { serviceConnection: '${{ parameters.serviceConnection }}', part: '--pre-sync', displayName: 'Release pre-sync hooks' }
+
+      - ${{ each w in parameters.waves }}:
+          # A pause is an agentless Manual Validation in front of its wave. It only runs if the
+          # plan put a pause in this wave; otherwise it shows as skipped.
+          - job: pause_${{ w.wave }}
+            displayName: Pause before wave ${{ w.wave }}
+            dependsOn: ${{ w.after }}
+            pool: server
+            timeoutInMinutes: 1440
+            condition: >-
+              and(eq(dependencies.${{ w.after }}.result, 'Succeeded'),
+                  eq(stageDependencies.plan.plan.outputs['plan.pause${{ w.wave }}'], 'true'))
+            variables:
+              instructions: $[ stageDependencies.plan.plan.outputs['plan.pause${{ w.wave }}Instructions'] ]
+            steps:
+              - task: ManualValidation@1
+                inputs:
+                  notifyUsers: ${{ parameters.pauseApprovers }}
+                  approvers: ${{ parameters.pauseApprovers }}
+                  instructions: $(instructions)   # full text is on the run's "Release plan" summary tab
+                  onTimeout: reject
+
+          - deployment: wave_${{ w.wave }}
+            displayName: Wave ${{ w.wave }}
+            dependsOn:
+              - ${{ w.after }}
+              - pause_${{ w.wave }}
+            environment: ${{ parameters.environment }}
+            pool: { vmImage: ubuntu-latest }
+            # Waves are filled in order, so if this one has work the one before it did too, and it
+            # must have succeeded. The pause is fine skipped (no pause) but not rejected.
+            condition: >-
+              and(eq(dependencies.${{ w.after }}.result, 'Succeeded'),
+                  in(dependencies.pause_${{ w.wave }}.result, 'Succeeded', 'Skipped'),
+                  eq(stageDependencies.plan.plan.outputs['plan.wave${{ w.wave }}'], 'true'))
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - template: apply-step.yml
+                      parameters: { serviceConnection: '${{ parameters.serviceConnection }}', part: '--wave ${{ w.wave }}', displayName: 'Deploy wave ${{ w.wave }}' }
+
+      - deployment: post_sync
+        displayName: Post-sync hooks
+        dependsOn:
+          - pre_sync
+          - ${{ each w in parameters.waves }}:
+              - pause_${{ w.wave }}
+              - wave_${{ w.wave }}
+        environment: ${{ parameters.environment }}
+        pool: { vmImage: ubuntu-latest }
+        # failed() is true if any wave failed or any pause was rejected. Skipped waves (no work) are fine.
+        condition: and(eq(dependencies.pre_sync.result, 'Succeeded'), not(failed()), not(canceled()))
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: apply-step.yml
+                  parameters: { serviceConnection: '${{ parameters.serviceConnection }}', part: '--post-sync', displayName: 'Release post-sync hooks' }
+
+  # ── Record: tag the commit and keep the bill of materials ────────────────────────────────
+  - stage: record
+    displayName: Record
+    dependsOn: [plan, sync]
+    condition: eq(dependencies.sync.result, 'Succeeded')
+    variables:
+      release: $[ stageDependencies.plan.plan.outputs['plan.release'] ]
+    jobs:
+      - job: record
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+            persistCredentials: true   # to push the tag; the build service needs "Create tag" on this repo
+          - download: current
+            artifact: release
+          - template: install-relctl.yml
+          - bash: |
+              set -euo pipefail
+              name="${RELEASE:-$(Build.BuildNumber)}"
+              relctl bom --env "${{ parameters.environment }}" --feed-cache "$(releaseDir)/packages" \
+                --out "$(Build.ArtifactStagingDirectory)/${{ parameters.environment }}-$name.cdx.json"
+              git tag "${{ parameters.environment }}/$name" "$(Build.SourceVersion)"
+              git push origin "refs/tags/${{ parameters.environment }}/$name"
+            displayName: Tag ${{ parameters.environment }}/<release> and write the BOM
+            env:
+              RELEASE: $(release)
+              AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+          - publish: $(Build.ArtifactStagingDirectory)
+            artifact: bom

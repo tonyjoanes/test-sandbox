@@ -1,0 +1,22 @@
+# Every night: does every environment still match its manifest? Fails (and so notifies) if
+# something was deployed outside relctl, or a release didn't finish. Read-only.
+trigger: none
+pr: none
+schedules:
+  - cron: '17 5 * * *'   # 05:17 UTC
+    displayName: Nightly drift check
+    branches: { include: [main] }
+    always: true
+
+pool: { vmImage: ubuntu-latest }
+
+steps:
+  - checkout: self
+  - template: templates/install-relctl.yml
+  - task: AzureCLI@2
+    displayName: Desired vs actual, every environment
+    inputs:
+      azureSubscription: sc-release-reader   # Reader on every environment's resource groups
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: relctl diff --fail-on-drift

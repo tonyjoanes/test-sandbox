@@ -1,0 +1,7 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: portal-web
+version: 5.0.2
+build:
+  commit: 0edeb6e633fd2c13b029a4396c62f18debe16b30
+  run: "9174"
+  branch: main

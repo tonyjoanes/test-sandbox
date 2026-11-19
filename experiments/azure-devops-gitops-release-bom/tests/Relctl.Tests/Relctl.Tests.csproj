@@ -1,0 +1,10 @@
+<Project Sdk="MSTest.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Relctl\Relctl.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Tests copy the example release repo and feed into temp folders and break them. -->
+    <None Include="..\..\release-repo\**\*" LinkBase="assets\release-repo" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\sample-feed\**\*" LinkBase="assets\sample-feed" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: payments-api
+version: 2.4.0
+build:
+  commit: d236aa58118c9eeded0f996063008c56866f2185
+  run: "8732"
+  branch: main
+requires:
+  - component: customers-api
+    minVersion: 1.2.0
+    reason: Calls GET /customers/{id}/billing-profile, which was added in customers-api 1.2.0.

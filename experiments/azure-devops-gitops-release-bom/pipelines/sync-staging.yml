@@ -1,0 +1,12 @@
+# Deploys environments/staging.yaml when a PR that changes it merges to main.
+trigger:
+  branches: { include: [main] }
+  paths: { include: [environments/staging.yaml] }
+pr: none
+lockBehavior: sequential
+
+extends:
+  template: templates/sync-environment.yml
+  parameters:
+    environment: staging
+    serviceConnection: sc-release-prod

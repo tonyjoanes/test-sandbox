@@ -1,0 +1,7 @@
+# Written by the build pipeline into every package. Rules here belong to this exact version.
+component: notifications-func
+version: 3.2.0
+build:
+  commit: e0753cac3a26baca837220aa69ba654ef38d7d44
+  run: "5116"
+  branch: main

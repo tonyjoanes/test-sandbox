@@ -1,0 +1,32 @@
+name: orders-api
+type: app-service
+owner: '[Platform]\Orders Team'
+versionPath: /version
+hooks:
+  preSync:
+    - name: migrate-database
+      script: hooks/run-migration-bundle.sh
+  postSync:
+    - name: ready
+      http: /health/ready
+targets:
+  dev:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-orders-dev
+    app: app-orders-dev
+    slot: staging
+  uat:
+    subscription: 00000000-0000-0000-0000-00000000a001
+    resourceGroup: rg-orders-uat
+    app: app-orders-uat
+    slot: staging
+  staging:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-orders-stg
+    app: app-orders-stg
+    slot: staging
+  live:
+    subscription: 00000000-0000-0000-0000-00000000b002
+    resourceGroup: rg-orders-prd
+    app: app-orders-prd
+    slot: staging

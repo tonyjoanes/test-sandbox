@@ -1,0 +1,23 @@
+# Installs relctl (published from this repo's tool/ pipeline to an Azure Artifacts NuGet feed)
+# and the azure-devops az extension it uses to download Universal Packages.
+parameters:
+  - name: version
+    type: string
+    default: '0.1.*'
+  - name: toolFeed
+    type: string
+    default: https://pkgs.dev.azure.com/contoso/Platform/_packaging/tools/nuget/v3/index.json
+
+steps:
+  - task: UseDotNet@2
+    displayName: Use .NET 10
+    inputs:
+      packageType: sdk
+      version: 10.0.x
+  - task: NuGetAuthenticate@1
+  - bash: |
+      set -euo pipefail
+      dotnet tool install --global Relctl --version "${{ parameters.version }}" --add-source "${{ parameters.toolFeed }}"
+      echo "##vso[task.prependpath]$HOME/.dotnet/tools"
+      az extension add --name azure-devops --only-show-errors
+    displayName: Install relctl
