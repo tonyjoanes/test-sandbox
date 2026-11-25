@@ -1,0 +1,34 @@
+// Microsoft.Testing.Platform configuration for Orders.Integration.Tests (xUnit v3).
+// The same testconfig.json format as the MSTest projects: MTP owns this file, not the test framework.
+// (xUnit's own settings, if you need any, still go in xunit.runner.json.)
+{
+  "codeCoverage": {
+    "Configuration": {
+      "Format": "cobertura",
+      "CoverageFileName": "Orders.Integration.Tests.cobertura.xml",
+      "CodeCoverage": {
+        // Journey tests exercise both production assemblies, and that is the point of them,
+        // so this project reports on both. Compare Orders.Api.Tests, which reports on the API only.
+        "ModulePaths": {
+          "Include": [ ".*Orders\\.Api\\.dll$", ".*Orders\\.Domain\\.dll$" ]
+        },
+        "Sources": {
+          "Exclude": [
+            ".*[\\\\/]Orders\\.Api[\\\\/]Program\\.cs$",
+            ".*[\\\\/]obj[\\\\/].*"
+          ]
+        },
+        "Attributes": {
+          "Exclude": [ "^System\\.CodeDom\\.Compiler\\.GeneratedCodeAttribute$" ]
+        }
+      }
+    }
+  },
+
+  // Read by scripts/Test-CoverageGate.ps1. Deliberately low: integration coverage says "this code ran",
+  // not "this code is tested". The real bars are on the unit test projects.
+  "coverageGate": {
+    "minimumLineRate": 60,
+    "minimumBranchRate": 40
+  }
+}

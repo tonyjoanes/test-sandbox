@@ -1,13 +1,17 @@
-# Reusable steps: run Microsoft.Testing.Platform (MTP) tests with code coverage, publish the
-# results to the run, then enforce each test project's own coverage bar.
+# Reusable steps: run Microsoft.Testing.Platform (MTP) tests with code coverage, publish the results to
+# the run, then enforce each test project's own coverage bar. Every script step is PowerShell 7 (pwsh).
 #
-# Nothing coverage-specific is passed per project. Every test project carries a testconfig.json
-# with a `codeCoverage` section (what to include/exclude, output format, file name) and a
-# `coverageGate` section (its minimum line/branch rate). One `dotnet test --coverage` run picks
-# each project's settings up from its own file. See the experiment's README.
+# Nothing coverage-specific is passed per project. Every test project carries a testconfig.json with a
+# `codeCoverage` section (what to include/exclude, output format, file name) and a `coverageGate` section
+# (its minimum line/branch rate). One `dotnet test --coverage` picks each project's settings up from its
+# own file. See docs/how-coverage-works.md.
 #
 # Requires a global.json next to the solution with "test": { "runner": "Microsoft.Testing.Platform" }
 # (the .NET 10 SDK's native MTP mode for `dotnet test`).
+#
+# Why PowerShell@2 and not DotNetCoreCLI@2 `command: test`: that task was built for VSTest. It appends
+# `--logger trx` and its own `--results-directory`; under MTP every test app rejects `--logger` as an
+# invalid option (exit code 5, zero tests run). A script step runs exactly the arguments you write.
 
 parameters:
   # Folder holding global.json and the solution. Relative to $(Build.SourcesDirectory).
@@ -42,52 +46,45 @@ steps:
       useGlobalJson: true
       workingDirectory: ${{ parameters.workingDirectory }}
 
-  - task: DotNetCoreCLI@2
-    displayName: Restore
-    inputs:
-      command: restore
-      projects: ${{ parameters.workingDirectory }}/${{ parameters.solution }}
-
-  - task: DotNetCoreCLI@2
+  - task: PowerShell@2
     displayName: Build
     inputs:
-      command: build
-      projects: ${{ parameters.workingDirectory }}/${{ parameters.solution }}
-      arguments: --configuration ${{ parameters.configuration }} --no-restore
+      pwsh: true    # PowerShell 7. Windows agents otherwise default to Windows PowerShell 5.1.
+      targetType: inline
+      workingDirectory: ${{ parameters.workingDirectory }}
+      script: dotnet build ${{ parameters.solution }} --configuration ${{ parameters.configuration }}
 
   # Run every test project and collect coverage.
   #
-  # Why `command: custom` and not `command: test`: DotNetCoreCLI@2's `test` command was built for
-  # VSTest. It appends `--logger trx` VSTest-style; under MTP every test app rejects that as an
-  # invalid option (exit code 5, zero tests run). `custom` runs exactly the arguments below.
-  #
   #   --solution            .NET 10 MTP mode takes --solution/--project instead of a positional path.
-  #   --coverage            Microsoft.Testing.Extensions.CodeCoverage (bundled by MSTest.Sdk).
-  #                         Format, file name and filters come from each project's testconfig.json.
-  #   --report-trx          Microsoft.Testing.Extensions.TrxReport (also bundled by MSTest.Sdk).
+  #   --coverage            Microsoft.Testing.Extensions.CodeCoverage. Format, file name and filters come
+  #                         from each project's testconfig.json, NOT from here.
+  #   --report-trx          Microsoft.Testing.Extensions.TrxReport, for the Tests tab.
   #   --report-trx-filename {asm}.trx gives one predictable TRX per test project.
   #   --results-directory   one shared folder; the per-project file names keep reports apart.
   #   --no-progress         no live progress bar in a log that isn't a terminal.
-  - task: DotNetCoreCLI@2
+  - task: PowerShell@2
     displayName: Test with coverage (MTP)
-    inputs:
-      command: custom
-      custom: test
-      workingDirectory: ${{ parameters.workingDirectory }}
-      arguments: >-
-        --solution ${{ parameters.solution }}
-        --configuration ${{ parameters.configuration }}
-        --no-build
-        --no-progress
-        --results-directory $(Agent.TempDirectory)/TestResults
-        --coverage
-        --report-trx
-        --report-trx-filename {asm}.trx
-        ${{ parameters.extraTestArguments }}
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    inputs:
+      pwsh: true
+      targetType: inline
+      workingDirectory: ${{ parameters.workingDirectory }}
+      script: |
+        dotnet test `
+          --solution ${{ parameters.solution }} `
+          --configuration ${{ parameters.configuration }} `
+          --no-build `
+          --no-progress `
+          --results-directory "$(Agent.TempDirectory)/TestResults" `
+          --coverage `
+          --report-trx `
+          --report-trx-filename '{asm}.trx' ${{ parameters.extraTestArguments }}
+        # MTP exit codes: 0 ok, 2 test failed, 5 bad option, 8 zero tests ran. https://aka.ms/testingplatform/exitcodes
+        exit $LASTEXITCODE
 
-  # Test results tab. Runs even when tests failed, so the failures are visible in the UI.
+  # Tests tab. Runs even when tests failed, so the failures are visible in the UI.
   # failTaskOnFailedTests is off because the test step above has already failed the job.
   - task: PublishTestResults@2
     displayName: Publish test results
@@ -100,37 +97,45 @@ steps:
       mergeTestResults: false
       failTaskOnFailedTests: false
 
-  # Code Coverage tab. v2 accepts several Cobertura (or .coverage) files and merges them into a
-  # single report with an HTML view, so the per-project reports go in together.
-  # Azure DevOps keeps ONE coverage report per run; the per-project breakdown is the gate's
-  # summary below (Extensions tab).
+  # Code Coverage tab. v2 takes several Cobertura files and MERGES them into one report: a line is
+  # covered if any test project hit it. Azure DevOps keeps ONE coverage report per run, so this is
+  # always the combined view. The per-project view is the gate's table below (Extensions tab).
   - task: PublishCodeCoverageResults@2
-    displayName: Publish code coverage
+    displayName: Publish code coverage (merged)
     condition: succeededOrFailed()
     inputs:
       summaryFileLocation: $(Agent.TempDirectory)/TestResults/*.cobertura.xml
       pathToSources: $(Build.SourcesDirectory)
       failIfCoverageEmpty: true
 
-  # Raw reports, for anyone who wants to open them in an IDE or ReportGenerator locally.
+  # Merged per-assembly table on the Extensions tab, plus an HTML report kept as an artifact.
+  - task: PowerShell@2
+    displayName: Merged coverage summary
+    condition: succeededOrFailed()
+    inputs:
+      pwsh: true
+      filePath: ${{ parameters.workingDirectory }}/scripts/New-CoverageReport.ps1
+      arguments: -ResultsDirectory "$(Agent.TempDirectory)/TestResults" -PublishSummary
+      workingDirectory: ${{ parameters.workingDirectory }}
+
+  # Raw .trx / .cobertura.xml plus the HTML report, for anyone who wants to dig in locally.
   - task: PublishPipelineArtifact@1
-    displayName: Publish coverage reports artifact
+    displayName: Publish test results artifact
     condition: succeededOrFailed()
     inputs:
       targetPath: $(Agent.TempDirectory)/TestResults
       artifact: test-results-$(System.JobAttempt)
 
   # Per-project coverage bar. Only runs if the tests passed: coverage from a failed run means little.
-  # Writes a table to the run's Extensions tab and logs one pipeline error per project under its bar.
+  # Writes a table to the Extensions tab and logs one pipeline error per project under its bar.
   - ${{ if parameters.enforceCoverageGate }}:
-    - task: DotNetCoreCLI@2
+    - task: PowerShell@2
       displayName: Enforce per-project coverage
       inputs:
-        command: custom
-        custom: run
-        workingDirectory: ${{ parameters.workingDirectory }}
+        pwsh: true
+        filePath: ${{ parameters.workingDirectory }}/scripts/Test-CoverageGate.ps1
         arguments: >-
-          scripts/check-coverage.cs --
-          --results $(Agent.TempDirectory)/TestResults
-          --tests ${{ parameters.testsDirectory }}
-          --summary $(Agent.TempDirectory)/coverage-summary.md
+          -ResultsDirectory "$(Agent.TempDirectory)/TestResults"
+          -TestsDirectory "${{ parameters.testsDirectory }}"
+          -SummaryPath "$(Agent.TempDirectory)/coverage-summary.md"
+        workingDirectory: ${{ parameters.workingDirectory }}
