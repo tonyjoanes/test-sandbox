@@ -42,10 +42,15 @@ jobs:
           dotnet test --solution Orders.slnx --configuration Release --no-build --no-progress
           --results-directory "$RUNNER_TEMP/TestResults"
           --coverage --report-trx --report-trx-filename '{asm}.trx'
+      - name: Merged coverage report
+        if: always()
+        shell: pwsh
+        run: ./scripts/New-CoverageReport.ps1 -ResultsDirectory "$env:RUNNER_TEMP/TestResults"
       - name: Enforce per-project coverage
+        shell: pwsh
         run: >-
-          dotnet run scripts/check-coverage.cs --
-          --results "$RUNNER_TEMP/TestResults" --tests tests --summary "$GITHUB_STEP_SUMMARY"
+          ./scripts/Test-CoverageGate.ps1 -ResultsDirectory "$env:RUNNER_TEMP/TestResults"
+          -TestsDirectory tests -SummaryPath $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

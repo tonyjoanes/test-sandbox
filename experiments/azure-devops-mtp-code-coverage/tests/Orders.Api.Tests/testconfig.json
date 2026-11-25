@@ -32,7 +32,7 @@
     }
   },
 
-  // Read by scripts/check-coverage.cs. Endpoint tests cover the HTTP surface; the bar is lower
+  // Read by scripts/Test-CoverageGate.ps1. Endpoint tests cover the HTTP surface; the bar is lower
   // than the domain's on purpose.
   "coverageGate": {
     "minimumLineRate": 85,

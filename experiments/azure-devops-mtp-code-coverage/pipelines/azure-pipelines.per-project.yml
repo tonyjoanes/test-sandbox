@@ -29,6 +29,8 @@ jobs:
           testProject: Orders.Domain.Tests
         api:
           testProject: Orders.Api.Tests
+        integration:
+          testProject: Orders.Integration.Tests   # xUnit v3: same steps, same testconfig.json format
     steps:
       - checkout: self
         fetchDepth: 1
@@ -39,20 +41,22 @@ jobs:
           useGlobalJson: true
           workingDirectory: $(experimentPath)
 
-      - task: DotNetCoreCLI@2
+      - task: PowerShell@2
         displayName: Test $(testProject) with coverage (MTP)
         inputs:
-          command: custom
-          custom: test
+          pwsh: true
+          targetType: inline
           workingDirectory: $(experimentPath)
-          arguments: >-
-            --project tests/$(testProject)
-            --configuration Release
-            --no-progress
-            --results-directory $(Agent.TempDirectory)/TestResults
-            --coverage
-            --report-trx
-            --report-trx-filename {asm}.trx
+          script: |
+            dotnet test `
+              --project tests/$(testProject) `
+              --configuration Release `
+              --no-progress `
+              --results-directory "$(Agent.TempDirectory)/TestResults" `
+              --coverage `
+              --report-trx `
+              --report-trx-filename '{asm}.trx'
+            exit $LASTEXITCODE
 
       - task: PublishTestResults@2
         condition: succeededOrFailed()
@@ -63,19 +67,18 @@ jobs:
           testRunTitle: $(testProject)
           failTaskOnFailedTests: false
 
-      # Point --tests at this project's folder only: the other project's report isn't on this
-      # agent, and the gate would (rightly) fail it as missing.
-      - task: DotNetCoreCLI@2
+      # Point -TestsDirectory at this project's folder only: the other projects' reports aren't on this
+      # agent, and the gate would (rightly) fail them as missing.
+      - task: PowerShell@2
         displayName: Enforce $(testProject) coverage
         inputs:
-          command: custom
-          custom: run
-          workingDirectory: $(experimentPath)
+          pwsh: true
+          filePath: $(experimentPath)/scripts/Test-CoverageGate.ps1
           arguments: >-
-            scripts/check-coverage.cs --
-            --results $(Agent.TempDirectory)/TestResults
-            --tests tests/$(testProject)
-            --summary $(Agent.TempDirectory)/coverage-summary.md
+            -ResultsDirectory "$(Agent.TempDirectory)/TestResults"
+            -TestsDirectory "tests/$(testProject)"
+            -SummaryPath "$(Agent.TempDirectory)/coverage-summary.md"
+          workingDirectory: $(experimentPath)
 
       - publish: $(Agent.TempDirectory)/TestResults
         artifact: coverage-$(testProject)
@@ -90,8 +93,26 @@ jobs:
         fetchDepth: 1
       - download: current
         patterns: 'coverage-*/*.cobertura.xml'
+      - task: UseDotNet@2
+        inputs:
+          packageType: sdk
+          useGlobalJson: true
+          workingDirectory: $(experimentPath)
+      # Bring every job's files into one folder, then publish them as ONE merged report.
+      - pwsh: |
+          New-Item -ItemType Directory -Force "$(Agent.TempDirectory)/AllCoverage" | Out-Null
+          Get-ChildItem "$(Pipeline.Workspace)" -Recurse -Filter *.cobertura.xml |
+            Copy-Item -Destination "$(Agent.TempDirectory)/AllCoverage"
+        displayName: Collect coverage from every job
       - task: PublishCodeCoverageResults@2
         inputs:
-          summaryFileLocation: $(Pipeline.Workspace)/coverage-*/*.cobertura.xml
+          summaryFileLocation: $(Agent.TempDirectory)/AllCoverage/*.cobertura.xml
           pathToSources: $(Build.SourcesDirectory)
           failIfCoverageEmpty: true
+      - task: PowerShell@2
+        displayName: Merged coverage summary
+        inputs:
+          pwsh: true
+          filePath: $(experimentPath)/scripts/New-CoverageReport.ps1
+          arguments: -ResultsDirectory "$(Agent.TempDirectory)/AllCoverage" -PublishSummary
+          workingDirectory: $(experimentPath)

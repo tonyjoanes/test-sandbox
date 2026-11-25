@@ -1,0 +1,41 @@
+<!--
+  An xUnit v3 test project on Microsoft.Testing.Platform (MTP).
+
+  Compare with the MSTest projects next to it, which are one line (Sdk="MSTest.Sdk") because
+  MSTest.Sdk does all of this for you. With xUnit (or plain Microsoft.NET.Sdk + MSTest/NUnit/TUnit)
+  you wire MTP up yourself, and these are the pieces:
+
+    1. OutputType=Exe        An MTP test project IS a console app. `dotnet test` just runs it.
+       UseMicrosoftTestingPlatformRunner  makes that app use MTP when you start it directly too.
+    2. xunit.v3.mtp-v2       xUnit v3 built against MTP v2 (the same major version MSTest 4 uses).
+                             xUnit v2 (`xunit` + `xunit.runner.visualstudio`) is VSTest-only.
+    3. CodeCoverage          Microsoft.Testing.Extensions.CodeCoverage: adds the `- -coverage` option.
+                             Without it, `dotnet test - -coverage` fails with "unknown option".
+    4. TrxReport             Microsoft.Testing.Extensions.TrxReport: adds `- -report-trx` for Azure DevOps.
+
+  You do NOT add Microsoft.NET.Test.Sdk, xunit.runner.visualstudio or coverlet.collector: those
+  are VSTest pieces. global.json ("test": { "runner": "Microsoft.Testing.Platform" }) makes
+  `dotnet test` drive this exe directly.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Run on MTP even when the exe is started directly (./Orders.Integration.Tests - -coverage).
+         Without it, `dotnet test` still uses MTP, but launching the exe yourself gets xUnit's own
+         console runner, which has no - -coverage option. -->
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Orders.Api\Orders.Api.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

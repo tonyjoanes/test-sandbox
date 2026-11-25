@@ -24,7 +24,7 @@
     }
   },
 
-  // Not part of MTP or the coverage extension: read by scripts/check-coverage.cs after the run.
+  // Not part of MTP or the coverage extension: read by scripts/Test-CoverageGate.ps1 after the run.
   // Pure business rules, so the bar is high.
   "coverageGate": {
     "minimumLineRate": 95,
